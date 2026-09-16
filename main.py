@@ -18,6 +18,7 @@ import dab.content
 import dab.output
 import dab.version
 import argparse
+import fnmatch
 from logger import LOGGER
 from util.config_loader import init_interactive_setup, make_app_id_list
 from util.runtime_config_store import load_config, apply_overrides, save_config
@@ -26,6 +27,12 @@ from util.argument_validator import validate_arguments_and_warn
 config_path = os.environ.get("DAB_CONFIG_JSON")
 
 SUITE_NAMES = ["conformance", "output_image", "netflix", "functional"]
+
+
+def case_matches(test_id, requested_case):
+    """Return whether a requested case matches a listed test ID."""
+    return fnmatch.fnmatchcase(test_id, requested_case)
+
 
 if __name__ == "__main__":
     test_suites_str = ""
@@ -53,7 +60,7 @@ if __name__ == "__main__":
                         default="localhost")
 
     parser.add_argument("-c","--case", 
-                        help="test only the specified case(s). Use comma to separate multiple. Ex: -c InputLongKeyPressKeyDown,AppLaunchNegativeTest",
+                        help="test only the specified case(s). Use comma to separate multiple. Supports shell-style wildcards (*, ?, []). Ex: -c InputLongKeyPressKeyDown,AppLaunchNegativeTest or -c 'SystemPower*'",
                         type=str)
 
     parser.add_argument("-o","--output", 
@@ -179,6 +186,11 @@ if __name__ == "__main__":
         LOGGER.info(f"No suite specified. All suites selected: {', '.join(suite_to_run.keys())}.")
 
     if (args.list == True):
+        requested_cases = (
+            [c.strip() for c in args.case.split(",")]
+            if isinstance(args.case, str) and args.case
+            else None
+        )
         for suite in suite_to_run:
             LOGGER.info(f"Listing test cases for suite '{suite}'...")
             listed = 0
@@ -186,8 +198,13 @@ if __name__ == "__main__":
                 try:
                     topic, _body_spec, _func, _expected, title, _is_neg, _ver = Tester.unpack_test_case(test_case)
                     if topic and title:
-                        LOGGER.result(to_test_id(f"{topic}/{title}"))
-                        listed += 1
+                        test_id = to_test_id(f"{topic}/{title}")
+                        if requested_cases is None or any(
+                            case_matches(test_id, requested_case)
+                            for requested_case in requested_cases
+                        ):
+                            LOGGER.result(test_id)
+                            listed += 1
                     else:
                         LOGGER.warn(f"Skipping malformed test tuple (no topic/title): {test_case}")
                 except Exception as e:
@@ -206,23 +223,56 @@ if __name__ == "__main__":
             # Handle single or multiple cases passed via -c
             requested_cases = [c.strip() for c in args.case.split(",")]
             LOGGER.info(f"Requested case IDs: {requested_cases}")
-            matched_tests = []
+            matched_count = 0
+            selected_results = []
             for suite in suite_to_run:
                 LOGGER.info(f"Searching for requested cases in suite '{suite}'...")
+                matched_tests = []
                 for test_case in suite_to_run[suite]:
                     (dab_request_topic, dab_request_body, validate_output_function, expected_response, test_title, test_version, is_negative) = Tester.unpack_test_case(test_case)
                     if dab_request_topic is None:
                         continue
                     test_id = to_test_id(f"{dab_request_topic}/{test_title}")
-                    if test_id in requested_cases:
+                    if any(case_matches(test_id, requested_case) for requested_case in requested_cases):
                         matched_tests.append(test_case)
                 if matched_tests:
                     LOGGER.result(f"Matched {len(matched_tests)} case(s) in suite '{suite}'.")
+                    matched_count += len(matched_tests)
                     Tester.assert_device_available(device_id)
-                    Tester.Execute_Single_Test(suite, device_id, matched_tests, args.output)
-                    break
-            else:
+                    Tester.Execute_Single_Test(
+                        suite,
+                        device_id,
+                        matched_tests,
+                        args.output,
+                        emit_summary=False,
+                    )
+                    selected_results.extend(Tester.last_valid_results)
+            if matched_count == 0:
                 LOGGER.error(f"None of the requested test case IDs matched: {requested_cases}")
+            else:
+                outcomes = [
+                    getattr(result, "test_result", None)
+                    or getattr(result, "outcome", None)
+                    or "UNKNOWN"
+                    for result in selected_results
+                ]
+                LOGGER.result("Selected Test Results Summary")
+                LOGGER.result(f"Executed        : {len(selected_results)}")
+                LOGGER.result(f"  PASS          : {outcomes.count('PASS')}")
+                LOGGER.result(f"  FAIL          : {outcomes.count('FAILED')}")
+                LOGGER.result(f"  OPTIONAL_FAIL : {outcomes.count('OPTIONAL_FAILED')}")
+                LOGGER.result(f"  SKIPPED       : {outcomes.count('SKIPPED')}")
+                LOGGER.result("Results by test:")
+                for result in selected_results:
+                    outcome = (
+                        getattr(result, "test_result", None)
+                        or getattr(result, "outcome", None)
+                        or "UNKNOWN"
+                    )
+                    LOGGER.result(f"  {outcome:<16} {getattr(result, 'test_id', '<unknown>')}")
+                LOGGER.result(
+                    f"Overall Passed  : {'YES' if not any(outcome in {'FAILED', 'SKIPPED'} for outcome in outcomes) else 'NO'}"
+                )
 
     Tester.Close()
     LOGGER.ok("Run complete. Connection closed.")

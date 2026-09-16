@@ -148,7 +148,7 @@ options:
   -b BROKER, --broker BROKER
                         set the IP of the MQTT broker. Ex: -b 192.168.0.100
   -I ID, --ID ID        set the DAB Device ID. Ex: -I mydevice123
-  -c CASE, --case CASE  test only the specified case(s). Use comma to separate multiple. Ex: -c InputLongKeyPressKeyDown,AppLaunchNegativeTest
+  -c CASE, --case CASE  test only the specified case(s). Use comma to separate multiple. Supports shell-style wildcards (*, ?, []). Ex: -c 'SystemPower*'
   -o OUTPUT, --output OUTPUT
                         output location for the json file
   -s SUITE, --suite SUITE
@@ -190,6 +190,15 @@ The DAB Compliance Test Tool supports running tests in different ways:
 
   Use Case:
   Useful for re-running a group of specific tests.
+
+  Wildcards can be used to select test IDs by name. Quote the argument so the
+  shell passes the `*` through to the compliance suite:
+
+  ❯ python3 main.py --dab-version '2.1' -b 192.168.15.112 -I D4CFF9768418 -c 'SystemPower*'
+
+  Add `-l` to list the matching test IDs without executing them:
+
+  ❯ python3 main.py --dab-version '2.1' -b 192.168.15.112 -I D4CFF9768418 -l -c 'SystemPower*'
 
 3. Full Suite Execution
 
