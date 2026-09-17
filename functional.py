@@ -7852,7 +7852,7 @@ def run_power_mode_get_adaptive_support_check(dab_topic, test_name, tester, devi
         # Header
         for line in (
             f"[TEST] Power Mode GET — Adaptive Support Check (test_id={test_id}, device={device_id})",
-            "[DESC] If supported → expect 200 and a 'mode' string; if unsupported → expect 501 with clear message.",
+            "[DESC] If supported → expect 200 and a 'powerMode' string; if unsupported → expect 501 with clear message.",
             "[DESC] No prompts; auto-detect support.",
         ):
             LOGGER.result(line); logs.append(line)
@@ -7884,19 +7884,19 @@ def run_power_mode_get_adaptive_support_check(dab_topic, test_name, tester, devi
         # Support path
         if validate_code == ValidateCode.SUPPORT:
             if status == 200 and json_ok and isinstance(obj, dict):
-                mode_val = str(obj.get("mode", "UNKNOWN"))
+                mode_val = str(obj.get("powerMode", "UNKNOWN"))
                 if mode_val and mode_val != "UNKNOWN":
                     result.test_result = "PASS"
                     line = f"[RESULT] PASS — supported: status=200 with mode='{mode_val}'."
                     LOGGER.result(line); logs.append(line)
                 else:
                     result.test_result = "FAILED"
-                    line = f"[RESULT] FAILED — supported: missing/invalid 'mode' in body. Resp={raw_resp}"
+                    line = f"[RESULT] FAILED — supported: missing/invalid 'powerMode' in body. Resp={raw_resp}"
                     LOGGER.result(line); logs.append(line)
             elif 200 <= (status or 0) < 300:
                 # 2xx but body bad
                 result.test_result = "FAILED"
-                line = f"[RESULT] FAILED — supported: status={status} but invalid/absent JSON or 'mode'. Resp={raw_resp}"
+                line = f"[RESULT] FAILED — supported: status={status} but invalid/absent JSON or 'powerMode'. Resp={raw_resp}"
                 LOGGER.result(line); logs.append(line)
             elif status == 501:
                 # Inconsistent with checker; still judge by response
@@ -8032,7 +8032,7 @@ def run_power_mode_transition_standby_to_active(dab_topic, test_name, tester, de
             body = json.loads(resp) if resp else {}
         except Exception:
             body = {}
-        current_mode = str(body.get("mode", "UNKNOWN"))
+        current_mode = str(body.get("powerMode", "UNKNOWN"))
 
         LOGGER.result(f"[INFO] Current mode: {current_mode}")
         logs.append(f"[INFO] Current mode: {current_mode}")
@@ -8042,7 +8042,7 @@ def run_power_mode_transition_standby_to_active(dab_topic, test_name, tester, de
             logs.append("[PRECHECK] Not Active; setting to Active to satisfy precondition")
 
             rc, resp = execute_cmd_and_log(
-                tester, device_id, "system/power-mode/set", json.dumps({"mode": MODE_ACTIVE}), logs, result
+                tester, device_id, "system/power-mode/set", json.dumps({"powerMode": MODE_ACTIVE}), logs, result
             )
             if dab_status_from(resp, rc) != 200:
                 result.test_result = "FAILED"
@@ -8063,7 +8063,7 @@ def run_power_mode_transition_standby_to_active(dab_topic, test_name, tester, de
                 body = json.loads(resp) if resp else {}
             except Exception:
                 body = {}
-            pre_mode = str(body.get("mode", "UNKNOWN"))
+            pre_mode = str(body.get("powerMode", "UNKNOWN"))
 
             if pre_mode != MODE_ACTIVE:
                 result.test_result = "FAILED"
@@ -8078,7 +8078,7 @@ def run_power_mode_transition_standby_to_active(dab_topic, test_name, tester, de
         LOGGER.result("[STEP] Setting power mode → Standby")
         logs.append("[STEP] Setting power mode → Standby")
         rc, resp = execute_cmd_and_log(
-            tester, device_id, "system/power-mode/set", json.dumps({"mode": MODE_STANDBY}), logs, result
+            tester, device_id, "system/power-mode/set", json.dumps({"powerMode": MODE_STANDBY}), logs, result
         )
         if dab_status_from(resp, rc) != 200:
             result.test_result = "FAILED"
@@ -8095,7 +8095,7 @@ def run_power_mode_transition_standby_to_active(dab_topic, test_name, tester, de
         LOGGER.result("[STEP] Setting power mode → Active")
         logs.append("[STEP] Setting power mode → Active")
         rc, resp = execute_cmd_and_log(
-            tester, device_id, "system/power-mode/set", json.dumps({"mode": MODE_ACTIVE}), logs, result
+            tester, device_id, "system/power-mode/set", json.dumps({"powerMode": MODE_ACTIVE}), logs, result
         )
         if dab_status_from(resp, rc) != 200:
             result.test_result = "FAILED"
@@ -8117,7 +8117,7 @@ def run_power_mode_transition_standby_to_active(dab_topic, test_name, tester, de
                 body = json.loads(resp) if resp else {}
             except Exception:
                 body = {}
-            final_mode = str(body.get("mode", "UNKNOWN"))
+            final_mode = str(body.get("powerMode", "UNKNOWN"))
 
             if final_mode == MODE_ACTIVE:
                 result.test_result = "PASS"
@@ -9112,7 +9112,7 @@ def run_power_mode_case_sensitive_negative(dab_topic, test_name, tester, device_
         LOGGER.result("[STEP] Setting power-mode to 'Active'.")
         logs.append(LOGGER.stamp("[STEP] Setting power-mode to 'Active'."))
 
-        payload_active = json.dumps({"mode": "Active"})
+        payload_active = json.dumps({"powerMode": "Active"})
         status1, _ = execute_cmd_and_log(tester, device_id, "system/power-mode/set", payload_active, logs, result)
         if status1 != 200:
             msg = f"[FAILED] Unable to set power mode to 'Active'. Status={status1}"
@@ -9152,7 +9152,7 @@ def run_power_mode_case_sensitive_negative(dab_topic, test_name, tester, device_
         _, resp2 = execute_cmd_and_log(tester, device_id, "system/power-mode/get", "{}", logs, result)
         try:
             parsed = json.loads(resp2) if isinstance(resp2, str) else resp2
-            active_mode = parsed.get("mode")
+            active_mode = parsed.get("powerMode")
         except Exception:
             active_mode = None
 
@@ -9191,7 +9191,7 @@ def run_power_mode_case_sensitive_negative(dab_topic, test_name, tester, device_
         LOGGER.result("[STEP] Sending invalid power-mode payload with lowercase 'standby'.")
         logs.append(LOGGER.stamp("[STEP] Sending invalid power-mode payload with lowercase 'standby'."))
 
-        payload_invalid = json.dumps({"mode": "standby"})
+        payload_invalid = json.dumps({"powerMode": "standby"})
         status_invalid, resp3 = execute_cmd_and_log(tester, device_id, "system/power-mode/set", payload_invalid, logs, result)
 
         if status_invalid == 400:
@@ -9234,7 +9234,7 @@ def run_power_mode_case_sensitive_negative(dab_topic, test_name, tester, device_
         _, resp4 = execute_cmd_and_log(tester, device_id, "system/power-mode/get", "{}", logs, result)
         try:
             parsed = json.loads(resp4) if isinstance(resp4, str) else resp4
-            final_mode = parsed.get("mode")
+            final_mode = parsed.get("powerMode")
         except Exception:
             final_mode = None
 
@@ -9279,7 +9279,7 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
     DAB 2.1 NEGATIVE TEST:
       - Set power-mode to "Active" (should succeed)
       - Confirm mode is "Active"
-      - Send system/power-mode/set WITHOUT 'mode' parameter (should fail)
+      - Send system/power-mode/set WITHOUT 'powerMode' parameter (should fail)
       - Confirm error (status=400)
       - Confirm mode remains "Active"
     """
@@ -9294,9 +9294,9 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
 
     # --- Header --------------------------------------------------------------
     for line in (
-        f"[TEST] Power Mode Missing 'mode' Parameter (Negative) — {test_name} "
+        f"[TEST] Power Mode Missing 'powerMode' Parameter (Negative) — {test_name} "
         f"(test_id={test_id}, device={device_id})",
-        "[DESC] Goal: send system/power-mode/set without 'mode' and ensure 400 and no mode change.",
+        "[DESC] Goal: send system/power-mode/set without 'powerMode' and ensure 400 and no mode change.",
         "[DESC] Preconditions: device powered on, DAB reachable, power-mode get/set supported.",
     ):
         LOGGER.result(line)
@@ -9305,7 +9305,7 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
     cap = "ops: system/power-mode/set, system/power-mode/get"
     if not require_capabilities(tester, device_id, cap, result, logs):
         summary = (
-            f"[SUMMARY] Power Mode Missing 'mode' Parameter (Negative) — final result: "
+            f"[SUMMARY] Power Mode Missing 'powerMode' Parameter (Negative) — final result: "
             f"{result.test_result}, test_id={test_id}, device={device_id}"
         )
         LOGGER.result(summary)
@@ -9317,7 +9317,7 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
         LOGGER.result("[STEP] Setting power-mode to 'Active' precondition.")
         logs.append(LOGGER.stamp("[STEP] Setting power-mode to 'Active' precondition."))
 
-        payload_active = json.dumps({"mode": "Active"})
+        payload_active = json.dumps({"powerMode": "Active"})
         status1, _ = execute_cmd_and_log(tester, device_id, "system/power-mode/set", payload_active, logs, result)
         if status1 != 200:
             msg = f"[FAILED] Unable to set power mode to 'Active'. Status={status1}"
@@ -9326,7 +9326,7 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
             result.test_result = "FAILED"
 
             summary = (
-                f"[SUMMARY] Power Mode Missing 'mode' Parameter (Negative) — final result: "
+                f"[SUMMARY] Power Mode Missing 'powerMode' Parameter (Negative) — final result: "
                 f"{result.test_result}, test_id={test_id}, device={device_id}"
             )
             LOGGER.result(summary)
@@ -9342,7 +9342,7 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
         result.test_result = "SKIPPED"
 
         summary = (
-            f"[SUMMARY] Power Mode Missing 'mode' Parameter (Negative) — final result: "
+            f"[SUMMARY] Power Mode Missing 'powerMode' Parameter (Negative) — final result: "
             f"{result.test_result}, test_id={test_id}, device={device_id}"
         )
         LOGGER.result(summary)
@@ -9357,7 +9357,7 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
         _, resp2 = execute_cmd_and_log(tester, device_id, "system/power-mode/get", "{}", logs, result)
         try:
             parsed = json.loads(resp2) if isinstance(resp2, str) else resp2
-            active_mode = parsed.get("mode")
+            active_mode = parsed.get("powerMode")
         except Exception:
             active_mode = None
 
@@ -9368,7 +9368,7 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
             result.test_result = "FAILED"
 
             summary = (
-                f"[SUMMARY] Power Mode Missing 'mode' Parameter (Negative) — final result: "
+                f"[SUMMARY] Power Mode Missing 'powerMode' Parameter (Negative) — final result: "
                 f"{result.test_result}, test_id={test_id}, device={device_id}"
             )
             LOGGER.result(summary)
@@ -9384,33 +9384,33 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
         result.test_result = "SKIPPED"
 
         summary = (
-            f"[SUMMARY] Power Mode Missing 'mode' Parameter (Negative) — final result: "
+            f"[SUMMARY] Power Mode Missing 'powerMode' Parameter (Negative) — final result: "
             f"{result.test_result}, test_id={test_id}, device={device_id}"
         )
         LOGGER.result(summary)
         logs.append(LOGGER.stamp(summary))
         return result
 
-    # STEP 3: Send system/power-mode/set WITHOUT 'mode' field
+    # STEP 3: Send system/power-mode/set WITHOUT 'powerMode' field
     try:
-        LOGGER.result("[STEP] Sending system/power-mode/set without 'mode' parameter.")
-        logs.append(LOGGER.stamp("[STEP] Sending system/power-mode/set without 'mode' parameter."))
+        LOGGER.result("[STEP] Sending system/power-mode/set without 'powerMode' parameter.")
+        logs.append(LOGGER.stamp("[STEP] Sending system/power-mode/set without 'powerMode' parameter."))
 
-        payload_missing = json.dumps({})  # No 'mode' key
+        payload_missing = json.dumps({})  # No 'powerMode' key
         status_missing, _ = execute_cmd_and_log(tester, device_id, "system/power-mode/set", payload_missing, logs, result)
 
         if status_missing == 400:
-            msg = "[RESULT] PASS (negative) — Device correctly rejected missing 'mode' parameter with 400 BAD REQUEST."
+            msg = "[RESULT] PASS (negative) — Device correctly rejected missing 'powerMode' parameter with 400 BAD REQUEST."
             LOGGER.result(msg)
             logs.append(LOGGER.stamp(msg))
         else:
-            msg = f"[RESULT] FAILED — Expected status 400 for missing 'mode', got {status_missing}."
+            msg = f"[RESULT] FAILED — Expected status 400 for missing 'powerMode', got {status_missing}."
             LOGGER.error(msg)
             logs.append(LOGGER.stamp(msg))
             result.test_result = "FAILED"
 
             summary = (
-                f"[SUMMARY] Power Mode Missing 'mode' Parameter (Negative) — final result: "
+                f"[SUMMARY] Power Mode Missing 'powerMode' Parameter (Negative) — final result: "
                 f"{result.test_result}, test_id={test_id}, device={device_id}"
             )
             LOGGER.result(summary)
@@ -9424,7 +9424,7 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
         result.test_result = "SKIPPED"
 
         summary = (
-            f"[SUMMARY] Power Mode Missing 'mode' Parameter (Negative) — final result: "
+            f"[SUMMARY] Power Mode Missing 'powerMode' Parameter (Negative) — final result: "
             f"{result.test_result}, test_id={test_id}, device={device_id}"
         )
         LOGGER.result(summary)
@@ -9439,7 +9439,7 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
         _, resp4 = execute_cmd_and_log(tester, device_id, "system/power-mode/get", "{}", logs, result)
         try:
             parsed = json.loads(resp4) if isinstance(resp4, str) else resp4
-            after_mode = parsed.get("mode")
+            after_mode = parsed.get("powerMode")
         except Exception:
             after_mode = None
 
@@ -9462,7 +9462,7 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
         result.test_result = "SKIPPED"
 
         summary = (
-            f"[SUMMARY] Power Mode Missing 'mode' Parameter (Negative) — final result: "
+            f"[SUMMARY] Power Mode Missing 'powerMode' Parameter (Negative) — final result: "
             f"{result.test_result}, test_id={test_id}, device={device_id}"
         )
         LOGGER.result(summary)
@@ -9471,7 +9471,7 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
 
     # FINAL SUMMARY
     summary = (
-        f"[SUMMARY] Power Mode Missing 'mode' Parameter (Negative) — final result: "
+        f"[SUMMARY] Power Mode Missing 'powerMode' Parameter (Negative) — final result: "
         f"{result.test_result}, test_id={test_id}, device={device_id}"
     )
     LOGGER.result(summary)
@@ -9522,7 +9522,7 @@ def run_power_mode_active_to_standby_check(dab_topic, test_name, tester, device_
         LOGGER.result("[STEP] Ensuring device is in 'Active' mode (precondition).")
         logs.append(LOGGER.stamp("[STEP] Ensuring device is in 'Active' mode (precondition)."))
 
-        payload_active = json.dumps({"mode": "Active"})
+        payload_active = json.dumps({"powerMode": "Active"})
         status1, _ = execute_cmd_and_log(tester, device_id, "system/power-mode/set", payload_active, logs, result)
         if status1 != 200:
             msg = f"[FAILED] Could not set to 'Active' precondition. Status={status1}"
@@ -9541,7 +9541,7 @@ def run_power_mode_active_to_standby_check(dab_topic, test_name, tester, device_
         _, resp2 = execute_cmd_and_log(tester, device_id, "system/power-mode/get", "{}", logs, result)
         try:
             parsed = json.loads(resp2) if isinstance(resp2, str) else resp2
-            pre_mode = parsed.get("mode")
+            pre_mode = parsed.get("powerMode")
         except Exception:
             pre_mode = None
 
@@ -9580,7 +9580,7 @@ def run_power_mode_active_to_standby_check(dab_topic, test_name, tester, device_
         LOGGER.result("[STEP] Setting power-mode to 'Standby'.")
         logs.append(LOGGER.stamp("[STEP] Setting power-mode to 'Standby'."))
 
-        payload_standby = json.dumps({"mode": "Standby"})
+        payload_standby = json.dumps({"powerMode": "Standby"})
         status2, _ = execute_cmd_and_log(tester, device_id, "system/power-mode/set", payload_standby, logs, result)
         if status2 != 200:
             msg = f"[FAILED] Could not set power mode to 'Standby'. Status={status2}"
@@ -9620,7 +9620,7 @@ def run_power_mode_active_to_standby_check(dab_topic, test_name, tester, device_
         _, resp3 = execute_cmd_and_log(tester, device_id, "system/power-mode/get", "{}", logs, result)
         try:
             parsed = json.loads(resp3) if isinstance(resp3, str) else resp3
-            after_mode = parsed.get("mode")
+            after_mode = parsed.get("powerMode")
         except Exception:
             after_mode = None
 
