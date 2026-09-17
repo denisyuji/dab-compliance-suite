@@ -7700,9 +7700,13 @@ def run_power_mode_get_standby_verify(dab_topic, test_name, tester, device_id):
 # === Test: Power Mode Get – ON State Verification ===
 def run_power_mode_get_on_verify(dab_topic, test_name, tester, device_id):
     """
-    Validates that system/power-mode/get reports ON when the device is powered ON and connected.
-    Acceptance: 2xx + state/mode == "ON" (exact). Anything else → FAILED. 501 → OPTIONAL_FAILED.
+    Validates that system/power-mode/get reports the device as powered ON.
+    DAB 2.1 defines PowerMode as "Active" | "Standby" | "Deep Sleep", so a device
+    that is ON must report powerMode "Active".
+    Acceptance: 2xx + powerMode == "Active". Anything else → FAILED. 501 → OPTIONAL_FAILED.
     """
+
+    ON_MODE = "ACTIVE"
 
     test_id = to_test_id(f"{dab_topic}/{test_name}")
     logs = []
@@ -7720,10 +7724,10 @@ def run_power_mode_get_on_verify(dab_topic, test_name, tester, device_id):
         # Header + description
         for line in (
             f"[TEST] Power Mode — {test_name} (test_id={test_id}, device={device_id})",
-            "[DESC] Goal: when device is ON, verify system/power-mode/get returns ON.",
+            "[DESC] Goal: when device is ON, verify system/power-mode/get returns powerMode 'Active'.",
             "[DESC] Preconditions: device ON, network connected, DAB reachable, on Home screen.",
             "[DESC] Required operations: system/power-mode/get.",
-            "[DESC] Pass criteria: 2xx and state/mode == ON.",
+            "[DESC] Pass criteria: 2xx and powerMode == 'Active'.",
         ):
             LOGGER.result(line); logs.append(line)
 
@@ -7776,34 +7780,28 @@ def run_power_mode_get_on_verify(dab_topic, test_name, tester, device_id):
             LOGGER.result(line); logs.append(line)
             return result
 
-        # Common shapes: {"state": "..."} | {"mode": "..."} | {"powerMode": {"state": "...", "mode": "..." }}
-        candidates = []
-        if isinstance(obj, dict):
-            if "state" in obj: candidates.append(("state", obj.get("state")))
-            if "mode" in obj:  candidates.append(("mode", obj.get("mode")))
-            pm = obj.get("powerMode")
-            if isinstance(pm, dict):
-                if "state" in pm: candidates.append(("powerMode.state", pm.get("state")))
-                if "mode" in pm:  candidates.append(("powerMode.mode", pm.get("mode")))
-
-        for k, v in candidates:
-            if v is not None and str(v).strip() != "":
-                parsed_state = str(v).strip().upper()
-                state_source = k
-                break
+        # DAB 2.1: GetPowerModeResponse carries the mode in the 'powerMode' string field.
+        pm = obj.get("powerMode") if isinstance(obj, dict) else None
+        if isinstance(pm, str) and pm.strip():
+            parsed_state = pm.strip().upper()
+            state_source = "powerMode"
 
         LOGGER.info(f"[INFO] system/power-mode/get raw response: {raw_resp}")
         logs.append(f"[INFO] system/power-mode/get raw response: {raw_resp}")
-        LOGGER.info(f"[INFO] Parsed state='{parsed_state}' (source={state_source})")
-        logs.append(f"[INFO] Parsed state='{parsed_state}' (source={state_source})")
+        LOGGER.info(f"[INFO] Parsed powerMode='{parsed_state}' (source={state_source})")
+        logs.append(f"[INFO] Parsed powerMode='{parsed_state}' (source={state_source})")
 
-        if parsed_state == "ON":
+        if state_source == "N/A":
+            result.test_result = "FAILED"
+            line = f"[RESULT] FAILED — response has no 'powerMode' string field. Response: {raw_resp}"
+            LOGGER.result(line); logs.append(line)
+        elif parsed_state == ON_MODE:
             result.test_result = "PASS"
-            line = "[RESULT] PASS — power mode reports ON as expected."
+            line = f"[RESULT] PASS — power mode reports '{pm}' as expected for a device that is ON."
             LOGGER.result(line); logs.append(line)
         else:
             result.test_result = "FAILED"
-            line = f"[RESULT] FAILED — expected ON, got '{parsed_state}' (source={state_source})."
+            line = f"[RESULT] FAILED — expected powerMode 'Active', got '{pm}'."
             LOGGER.result(line); logs.append(line)
 
     except UnsupportedOperationError as e:
