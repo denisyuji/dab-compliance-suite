@@ -7573,10 +7573,13 @@ def run_content_search_special_chars_validation(dab_topic, test_name, tester, de
 # === Test: Power Mode Get – STANDBY State Verification ===
 def run_power_mode_get_standby_verify(dab_topic, test_name, tester, device_id):
     """
-    Validates that system/power-mode/get reports STANDBY (or Background) when the device is in standby.
+    Validates that system/power-mode/get reports Standby while the device is in standby.
+    DAB 2.1 defines PowerMode as "Active" | "Standby" | "Deep Sleep".
+    The standby state is set up automatically with system/power-mode/set, and the
+    original power mode is restored at the end of the test.
     """
 
-    STANDBY_ALIASES = {"STANDBY", "BACKGROUND"}
+    STANDBY_MODE = "STANDBY"
 
     test_id = to_test_id(f"{dab_topic}/{test_name}")
     logs = []
@@ -7588,29 +7591,51 @@ def run_power_mode_get_standby_verify(dab_topic, test_name, tester, device_id):
     status = None
     parsed_state = "UNKNOWN"
     state_source = "N/A"
+    original_mode = None
 
     try:
         # Header + description
         for line in (
             f"[TEST] Power Mode — {test_name} (test_id={test_id}, device={device_id})",
-            "[DESC] Goal: when device is in STANDBY, verify system/power-mode/get returns STANDBY (or Background).",
-            "[DESC] Preconditions: device already in STANDBY and connected; DAB reachable.",
-            "[DESC] Required operations: system/power-mode/get.",
-            "[DESC] Pass criteria: 2xx and state/mode == STANDBY or Background.",
+            "[DESC] Goal: when device is in standby, verify system/power-mode/get returns powerMode 'Standby'.",
+            "[DESC] Preconditions: device connected and DAB reachable; standby is set up by the test itself.",
+            "[DESC] Required operations: system/power-mode/get, system/power-mode/set.",
+            "[DESC] Pass criteria: 2xx and powerMode == 'Standby'.",
         ):
             LOGGER.result(line); logs.append(line)
 
         # Capability gate
-        required_ops = "ops: system/power-mode/get"
+        required_ops = "ops: system/power-mode/get, system/power-mode/set"
         if not require_capabilities(tester, device_id, required_ops, result, logs):
             return result  # 'require_capabilities' already handled
 
-        # Preconditions (manual confirmation)
-        if not yes_or_no("Confirm the device is currently in STANDBY and network/DAB connectivity is stable [y/N]: ", logs):
-            result.test_result = "SKIPPED"
-            line = "[RESULT] SKIPPED — precondition not met (device not confirmed in STANDBY/connected)."
+        # Precondition — remember the current mode, then put the device in Standby
+        line = "[STEP] Reading current power mode via system/power-mode/get (for restore)."
+        LOGGER.result(line); logs.append(line)
+        pre_status, pre_resp = execute_cmd_and_log(tester, device_id, "system/power-mode/get", payload, logs, result)
+        if pre_status == 200:
+            try:
+                pre_obj = json.loads(pre_resp) if pre_resp else {}
+                if isinstance(pre_obj.get("powerMode"), str):
+                    original_mode = pre_obj["powerMode"]
+            except Exception:
+                original_mode = None
+        line = f"[INFO] Original power mode: {original_mode!r}"
+        LOGGER.result(line); logs.append(line)
+
+        line = "[STEP] Precondition: setting power mode to 'Standby' via system/power-mode/set."
+        LOGGER.result(line); logs.append(line)
+        set_status, set_resp = execute_cmd_and_log(
+            tester, device_id, "system/power-mode/set", json.dumps({"powerMode": "Standby"}), logs, result
+        )
+        if set_status == 501:
+            result.test_result = "OPTIONAL_FAILED"
+            line = "[RESULT] OPTIONAL_FAILED — system/power-mode/set not implemented (501); cannot set up standby."
             LOGGER.result(line); logs.append(line)
-            line = f"[SUMMARY] outcome={result.test_result}, test_id={test_id}, device={device_id}"
+            return result
+        if set_status != 200:
+            result.test_result = "SKIPPED"
+            line = f"[RESULT] SKIPPED — precondition failed: could not set 'Standby' (status={set_status}, response={set_resp})."
             LOGGER.result(line); logs.append(line)
             return result
 
@@ -7649,35 +7674,28 @@ def run_power_mode_get_standby_verify(dab_topic, test_name, tester, device_id):
             LOGGER.result(line); logs.append(line)
             return result
 
-        # Try typical locations
-        candidates = []
-        if isinstance(obj, dict):
-            if "state" in obj: candidates.append(("state", obj.get("state")))
-            if "mode" in obj:  candidates.append(("mode", obj.get("mode")))
-            pm = obj.get("powerMode")
-            if isinstance(pm, dict):
-                if "state" in pm: candidates.append(("powerMode.state", pm.get("state")))
-                if "mode" in pm:  candidates.append(("powerMode.mode", pm.get("mode")))
-
-        # First non-empty candidate wins
-        for k, v in candidates:
-            if v is not None and str(v).strip() != "":
-                parsed_state = str(v).strip().upper()
-                state_source = k
-                break
+        # DAB 2.1: GetPowerModeResponse carries the mode in the 'powerMode' string field.
+        pm = obj.get("powerMode") if isinstance(obj, dict) else None
+        if isinstance(pm, str) and pm.strip():
+            parsed_state = pm.strip().upper()
+            state_source = "powerMode"
 
         LOGGER.info(f"[INFO] system/power-mode/get raw response: {raw_resp}")
         logs.append(f"[INFO] system/power-mode/get raw response: {raw_resp}")
-        LOGGER.info(f"[INFO] Parsed state='{parsed_state}' (source={state_source})")
-        logs.append(f"[INFO] Parsed state='{parsed_state}' (source={state_source})")
+        LOGGER.info(f"[INFO] Parsed powerMode='{parsed_state}' (source={state_source})")
+        logs.append(f"[INFO] Parsed powerMode='{parsed_state}' (source={state_source})")
 
-        if parsed_state in STANDBY_ALIASES:
+        if state_source == "N/A":
+            result.test_result = "FAILED"
+            line = f"[RESULT] FAILED — response has no 'powerMode' string field. Response: {raw_resp}"
+            LOGGER.result(line); logs.append(line)
+        elif parsed_state == STANDBY_MODE:
             result.test_result = "PASS"
-            line = "[RESULT] PASS — power mode reports STANDBY/Background as expected."
+            line = f"[RESULT] PASS — power mode reports '{pm}' as expected while the device is in standby."
             LOGGER.result(line); logs.append(line)
         else:
             result.test_result = "FAILED"
-            line = f"[RESULT] FAILED — expected STANDBY/Background, got '{parsed_state}' (source={state_source})."
+            line = f"[RESULT] FAILED — expected powerMode 'Standby', got '{pm}'."
             LOGGER.result(line); logs.append(line)
 
     except UnsupportedOperationError as e:
@@ -7691,6 +7709,20 @@ def run_power_mode_get_standby_verify(dab_topic, test_name, tester, device_id):
         LOGGER.result(line); logs.append(line)
 
     finally:
+        # Best-effort restore of the original power mode
+        try:
+            if original_mode and original_mode.strip().upper() != STANDBY_MODE:
+                line = f"[STEP] Best-effort restore: setting power mode back to {original_mode!r}."
+                LOGGER.result(line); logs.append(line)
+                restore_status, _ = execute_cmd_and_log(
+                    tester, device_id, "system/power-mode/set", json.dumps({"powerMode": original_mode}), logs, None
+                )
+                line = f"[INFO] Restore system/power-mode/set returned status={restore_status}."
+                LOGGER.result(line); logs.append(line)
+        except Exception as e:
+            line = f"[INFO] Failed to restore original power mode: {e}"
+            LOGGER.result(line); logs.append(line)
+
         line = (
             f"[SUMMARY] outcome={result.test_result}, "
             f"status={status if status is not None else 'N/A'}, "
