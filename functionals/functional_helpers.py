@@ -226,15 +226,19 @@ def print_response(response, topic_for_color=None, indent=10):
         LOGGER.info(f"{' ' * indent}{key}: {value}")
 
 
-def yes_or_no(result, logs, question=""):
+def yes_or_no(question="", logs=None, default=None):
     positive = ['YES', 'Y']
     negative = ['NO', 'N']
+    default_norm = str(default).strip().upper()[:1] if default is not None else None
     while True:
-        prompt = f"{question}(Y/N)"
+        hint = "(Y/N)" if default_norm not in ("Y", "N") else ("(Y/n)" if default_norm == "Y" else "(y/N)")
+        prompt = f"{question}{hint}"
         LOGGER.prompt(prompt)
         if logs is not None:
             logs.append(prompt)
         ch = readchar().upper()
+        if ch in ('\r', '\n') and default_norm in ("Y", "N"):
+            ch = default_norm
         echo = f"[{ch}]"
         LOGGER.result(echo)
         if logs is not None:
@@ -245,7 +249,7 @@ def yes_or_no(result, logs, question=""):
             return False
 
 
-def select_input(result, logs, arr):
+def select_input(arr, logs=None):
     # Show options
     line0 = "*0: There is no option that meet the requirement."
     LOGGER.info(line0)
@@ -295,7 +299,7 @@ def countdown(title, count):
 
 def waiting_for_screensaver(result, logs, screenSaverTimeout, tips):
     while True:
-        if yes_or_no(result, logs, tips):
+        if yes_or_no(tips, logs):
             break
         else:
             continue

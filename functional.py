@@ -255,15 +255,19 @@ def print_response(response, topic_for_color=None, indent=10):
         LOGGER.info(f"{' ' * indent}{key}: {value}")
 
 
-def yes_or_no(result, logs, question=""):
+def yes_or_no(question="", logs=None, default=None):
     positive = ['YES', 'Y']
     negative = ['NO', 'N']
+    default_norm = str(default).strip().upper()[:1] if default is not None else None
     while True:
-        prompt = f"{question}(Y/N)"
+        hint = "(Y/N)" if default_norm not in ("Y", "N") else ("(Y/n)" if default_norm == "Y" else "(y/N)")
+        prompt = f"{question}{hint}"
         LOGGER.prompt(prompt)
         if logs is not None:
             logs.append(prompt)
         ch = readchar().upper()
+        if ch in ('\r', '\n') and default_norm in ("Y", "N"):
+            ch = default_norm
         echo = f"[{ch}]"
         LOGGER.result(echo)
         if logs is not None:
@@ -274,7 +278,7 @@ def yes_or_no(result, logs, question=""):
             return False
 
 
-def select_input(result, logs, arr):
+def select_input(arr, logs=None):
     # Show options
     line0 = "*0: There is no option that meet the requirement."
     LOGGER.info(line0)
@@ -324,7 +328,7 @@ def countdown(title, count):
 
 def waiting_for_screensaver(result, logs, screenSaverTimeout, tips):
     while True:
-        if yes_or_no(result, logs, tips):
+        if yes_or_no(tips):
             break
         else:
             continue
@@ -1411,7 +1415,7 @@ def run_screensaver_active_check(dab_topic, test_name, tester, device_id):
         LOGGER.result(line)
         logs.append(line)
 
-        user_validated = yes_or_no(result, logs, "Did the screensaver activate on the device?")
+        user_validated = yes_or_no("Did the screensaver activate on the device?")
         if user_validated:
             result.test_result = "PASS"
             line = "[RESULT] PASS — User confirmed that the screensaver activated successfully."
@@ -1510,7 +1514,7 @@ def run_screensaver_inactive_check(dab_topic, test_name, tester, device_id):
         logs.append(line)
 
         # Note the inverted logic here
-        user_validated = yes_or_no(result, logs, "Did the screensaver activate on the device?")
+        user_validated = yes_or_no("Did the screensaver activate on the device?")
         if not user_validated:
             result.test_result = "PASS"
             line = "[RESULT] PASS — User confirmed that the screensaver did NOT activate, as expected."
@@ -1598,7 +1602,7 @@ def run_screensaver_active_return_check(dab_topic, test_name, tester, device_id)
         waiting_for_screensaver(result, logs, SCREENSAVER_TIMEOUT_WAIT, "Ready to begin the idle wait?")
 
         # Step 4: Manually verify activation and then the return state
-        user_validated_active = yes_or_no(result, logs, "Did the screensaver activate on the device?")
+        user_validated_active = yes_or_no("Did the screensaver activate on the device?")
         if not user_validated_active:
             result.test_result = "FAILED"
             line = "[RESULT] FAILED — Prerequisite failed: User reported that the screensaver did not activate."
@@ -1606,7 +1610,7 @@ def run_screensaver_active_return_check(dab_topic, test_name, tester, device_id)
             logs.append(line)
             return result
 
-        user_validated_return = yes_or_no(result, logs, "Now, press a key to exit the screensaver. Did the screen return to its previous state?")
+        user_validated_return = yes_or_no("Now, press a key to exit the screensaver. Did the screen return to its previous state?")
         if user_validated_return:
             result.test_result = "PASS"
             line = "[RESULT] PASS — User confirmed the screen returned to its previous state."
@@ -1700,7 +1704,7 @@ def run_screensaver_active_after_continuous_idle_check(dab_topic, test_name, tes
         LOGGER.result(line)
         logs.append(line)
 
-        user_validated = yes_or_no(result, logs, f"Did the screensaver activate after the {SCREENSAVER_TIMEOUT_WAIT}-second continuous idle period?")
+        user_validated = yes_or_no(f"Did the screensaver activate after the {SCREENSAVER_TIMEOUT_WAIT}-second continuous idle period?")
         if user_validated:
             result.test_result = "PASS"
             line = "[RESULT] PASS — User confirmed the screensaver activated after a continuous idle period, as expected."
@@ -1790,7 +1794,7 @@ def run_screensaver_inactive_after_reboot_check(dab_topic, test_name, tester, de
         line = "[STEP] Waiting for manual confirmation that the device has restarted."
         LOGGER.result(line)
         logs.append(line)
-        while not yes_or_no(result, logs, "Has the device finished rebooting and is now idle?"):
+        while not yes_or_no("Has the device finished rebooting and is now idle?"):
             logs.append("Waiting for 'Y' confirmation.")
             time.sleep(5) # Add a small delay between prompts
 
@@ -1801,7 +1805,7 @@ def run_screensaver_inactive_after_reboot_check(dab_topic, test_name, tester, de
         waiting_for_screensaver(result, logs, SCREENSAVER_TIMEOUT_WAIT, "Ready to begin the idle wait?")
 
         # Step 6: Manually verify if the screensaver remained inactive
-        user_validated = yes_or_no(result, logs, "Did the screensaver activate?")
+        user_validated = yes_or_no("Did the screensaver activate?")
         if not user_validated:
             result.test_result = "PASS"
             line = "[RESULT] PASS — User confirmed the screensaver did NOT activate, as expected."
@@ -1892,7 +1896,7 @@ def run_screensavertimeout_300_check(dab_topic, test_name, tester, device_id):
         LOGGER.result(line)
         logs.append(line)
 
-        user_validated = yes_or_no(result, logs, f"Did the screensaver activate after {timeout_seconds} seconds?")
+        user_validated = yes_or_no(f"Did the screensaver activate after {timeout_seconds} seconds?")
         if user_validated:
             result.test_result = "PASS"
             line = "[RESULT] PASS — User confirmed that the screensaver activated successfully."
@@ -1978,7 +1982,7 @@ def run_screensavertimeout_reboot_check(dab_topic, test_name, tester, device_id)
         line = "[STEP] Waiting for manual confirmation that the device has restarted."
         LOGGER.result(line)
         logs.append(line)
-        while not yes_or_no(result, logs, "Has the device finished rebooting and is now idle?"):
+        while not yes_or_no("Has the device finished rebooting and is now idle?"):
             logs.append("Waiting for 'Y' confirmation.")
             time.sleep(5)
 
@@ -2025,7 +2029,7 @@ def run_screensavertimeout_reboot_check(dab_topic, test_name, tester, device_id)
         logs.append(line)
         waiting_for_screensaver(result, logs, SCREENSAVER_TIMEOUT_WAIT, "Ready to begin the idle wait?")
 
-        user_validated_active = yes_or_no(result, logs, "Did the screensaver activate?")
+        user_validated_active = yes_or_no("Did the screensaver activate?")
         if user_validated_active:
             result.test_result = "PASS"
             line = "[RESULT] PASS — User confirmed the screensaver activated using the persisted timeout."
@@ -2094,7 +2098,7 @@ def run_screensavertimeout_guest_mode_check(dab_topic, test_name, tester, device
         line = "[STEP] Manual check required: Checking for Guest Mode support."
         LOGGER.result(line)
         logs.append(line)
-        supports_guest_mode = yes_or_no(result, logs, "Does this device support a Guest Mode feature?")
+        supports_guest_mode = yes_or_no("Does this device support a Guest Mode feature?")
         if not supports_guest_mode:
             result.test_result = "OPTIONAL_FAILED"
             line = "[RESULT] OPTIONAL_FAILED — Test skipped because the device does not support Guest Mode."
@@ -2106,7 +2110,7 @@ def run_screensavertimeout_guest_mode_check(dab_topic, test_name, tester, device
         line = "[STEP] Manual action required: Please switch the device to Guest Mode."
         LOGGER.result(line)
         logs.append(line)
-        user_in_guest_mode = yes_or_no(result, logs, "Is the device now in Guest Mode? (Answering 'N' will fail this test)")
+        user_in_guest_mode = yes_or_no("Is the device now in Guest Mode? (Answering 'N' will fail this test)")
         if not user_in_guest_mode:
             result.test_result = "FAILED"
             line = "[RESULT] FAILED — Test failed because the device was not put into guest mode as required."
@@ -2139,7 +2143,7 @@ def run_screensavertimeout_guest_mode_check(dab_topic, test_name, tester, device
         waiting_for_screensaver(result, logs, SCREENSAVER_TIMEOUT_WAIT, "Ready to begin the idle wait?")
 
         # Step 6: Manually verify activation
-        user_validated_active = yes_or_no(result, logs, "Did the screensaver activate while in guest mode?")
+        user_validated_active = yes_or_no("Did the screensaver activate while in guest mode?")
         if user_validated_active:
             result.test_result = "PASS"
             line = "[RESULT] PASS — User confirmed the screensaver activated in guest mode."
@@ -2245,7 +2249,7 @@ def run_screensavertimeout_minimum_check(dab_topic, test_name, tester, device_id
         LOGGER.result(line)
         logs.append(line)
 
-        user_validated = yes_or_no(result, logs, f"Did the screensaver activate after {min_timeout} seconds?")
+        user_validated = yes_or_no(f"Did the screensaver activate after {min_timeout} seconds?")
         if user_validated:
             result.test_result = "PASS"
             line = "[RESULT] PASS — User confirmed the screensaver activated with the minimum timeout."
@@ -2326,7 +2330,7 @@ def run_screensavermintimeout_reboot_check(dab_topic, test_name, tester, device_
         line = "[STEP] Waiting for manual confirmation that the device has restarted."
         LOGGER.result(line)
         logs.append(line)
-        while not yes_or_no(result, logs, "Has the device finished rebooting and is now idle?"):
+        while not yes_or_no("Has the device finished rebooting and is now idle?"):
             logs.append("Waiting for 'Y' confirmation.")
             time.sleep(5)
 
@@ -2416,7 +2420,7 @@ def run_highContrastText_text_over_images_check(dab_topic, test_name, tester, de
         line = "[STEP] Manual action required: Navigate to a screen where text is displayed over an image."
         LOGGER.result(line)
         logs.append(line)
-        user_navigated = yes_or_no(result, logs, "Are you on a screen with text over an image?")
+        user_navigated = yes_or_no("Are you on a screen with text over an image?")
         if not user_navigated:
             result.test_result = "FAILED"
             line = "[RESULT] FAILED — Test failed because the required screen was not navigated to."
@@ -2438,7 +2442,7 @@ def run_highContrastText_text_over_images_check(dab_topic, test_name, tester, de
             return result
 
         # Step 4: Manually verify the visual change
-        user_validated_legible = yes_or_no(result, logs, "Is the text over the image now clearly legible with high contrast?")
+        user_validated_legible = yes_or_no("Is the text over the image now clearly legible with high contrast?")
         if user_validated_legible:
             result.test_result = "PASS"
             line = "[RESULT] PASS — User confirmed the text is now legible."
@@ -2513,7 +2517,7 @@ def run_highContrastText_video_playback_check(dab_topic, test_name, tester, devi
         line = "[STEP] Manual action required: Start playing any video on the device (e.g., in YouTube)."
         LOGGER.result(line)
         logs.append(line)
-        video_was_playing = yes_or_no(result, logs, "Is a video currently playing on the screen?")
+        video_was_playing = yes_or_no("Is a video currently playing on the screen?")
         if not video_was_playing:
             result.test_result = "FAILED"
             line = "[RESULT] FAILED — Test failed because video playback was not started as required."
@@ -2535,7 +2539,7 @@ def run_highContrastText_video_playback_check(dab_topic, test_name, tester, devi
             return result
 
         # Step 4: Manually verify the video playback was not affected
-        playback_unaffected = yes_or_no(result, logs, "Was the video playback smooth and uninterrupted when the setting was changed?")
+        playback_unaffected = yes_or_no("Was the video playback smooth and uninterrupted when the setting was changed?")
         if playback_unaffected:
             result.test_result = "PASS"
             line = "[RESULT] PASS — User confirmed video playback was not affected."
@@ -3662,7 +3666,7 @@ def run_personalized_ads_manual_check(dab_topic, test_name, tester, device_id):
         line = "[STEP] Manual check: Please navigate ad surfaces (home screen, YouTube, etc.)."
         LOGGER.result(line)
         logs.append(line)
-        user_validated = yes_or_no(result, logs, "Do the ads appear to be personalized to the user's interests?")
+        user_validated = yes_or_no("Do the ads appear to be personalized to the user's interests?")
         if user_validated:
             result.test_result = "PASS"
             line = "[RESULT] PASS — User confirmed ads are personalized."
@@ -3978,7 +3982,7 @@ def run_clear_data_system_app_check(dab_topic, test_name, tester, device_id):
         line = "Please select one SYSTEM application from the list to clear its data:"
         LOGGER.prompt(line)
         logs.append(line)
-        index = select_input(result, logs, app_id_list)
+        index = select_input(app_id_list, logs)
         if index == 0:
             result.test_result = "OPTIONAL_FAILED"
             line = "[RESULT] OPTIONAL_FAILED — No system app was selected."
@@ -5573,7 +5577,7 @@ def run_voice_log_collection_check(dab_topic, test_name, tester, device_id):
 
         logs.append(f"Please select one supported voice system in the list.")
         print(f"Please select one supported voice system in the list.")
-        index = select_input(result, logs, voiceSystem_list)
+        index = select_input(voiceSystem_list, logs)
         if index == 0:
             print(f"There are no supported voice system in the list.")
             logs.append(f"[OPTIONAL_FAILED] There are no supported voice system in the list.")
@@ -5665,7 +5669,7 @@ def run_voice_log_collection_check(dab_topic, test_name, tester, device_id):
         line = "[STEP] Manual action required: Please retrieve and inspect the collected system logs."
         LOGGER.result(line)
         logs.append(line)
-        logs_contain_voice_activity = yes_or_no(result, logs, f"Do the logs contain entries related to the voice command '{voice_command}'?")
+        logs_contain_voice_activity = yes_or_no(f"Do the logs contain entries related to the voice command '{voice_command}'?")
         
         if logs_contain_voice_activity:
             result.test_result = "PASS"
@@ -5774,7 +5778,7 @@ def run_idle_log_collection_check(dab_topic, test_name, tester, device_id):
         line = "[STEP] Manual action required: Please retrieve and inspect the collected system logs."
         LOGGER.result(line)
         logs.append(line)
-        logs_are_valid = yes_or_no(result, logs, "Are the logs in the correct format and complete for the idle period?")
+        logs_are_valid = yes_or_no("Are the logs in the correct format and complete for the idle period?")
         
         if logs_are_valid:
             result.test_result = "PASS"
@@ -5884,7 +5888,7 @@ def run_channel_switch_log_check(dab_topic, test_name, tester, device_id):
         line = "[STEP] Manual action required: Please retrieve and inspect the collected system logs."
         LOGGER.result(line)
         logs.append(line)
-        logs_are_valid = yes_or_no(result, logs, "Do the logs contain entries for each channel switch and related system events?")
+        logs_are_valid = yes_or_no("Do the logs contain entries for each channel switch and related system events?")
         
         if logs_are_valid:
             result.test_result = "PASS"
@@ -6017,7 +6021,7 @@ def run_app_switch_log_check(dab_topic, test_name, tester, device_id):
         line = "[STEP] Manual action required: Please retrieve and inspect the collected system logs."
         LOGGER.result(line)
         logs.append(line)
-        logs_are_valid = yes_or_no(result, logs, f"Do the logs contain entries for both '{app1_id}' and '{app2_id}' activities?")
+        logs_are_valid = yes_or_no(f"Do the logs contain entries for both '{app1_id}' and '{app2_id}' activities?")
         
         if logs_are_valid:
             result.test_result = "PASS"
@@ -6089,7 +6093,7 @@ def run_clear_data_preinstalled_app_check(dab_topic, test_name, tester, device_i
         line = "Please select one NON-REMovable, PRE-INSTALLED app from the list:"
         LOGGER.prompt(line)
         logs.append(line)
-        index = select_input(result, logs, app_id_list)
+        index = select_input(app_id_list, logs)
         if index == 0:
             result.test_result = "OPTIONAL_FAILED"
             line = "[RESULT] OPTIONAL_FAILED — No suitable pre-installed app was selected."
@@ -6131,7 +6135,7 @@ def run_clear_data_preinstalled_app_check(dab_topic, test_name, tester, device_i
         time.sleep(APP_LAUNCH_WAIT)
         
         # Step 5: Manual verification
-        user_validated_reset = yes_or_no(result, logs, "Did the application start up in its initial, first-run state (e.g., asking for login)?")
+        user_validated_reset = yes_or_no("Did the application start up in its initial, first-run state (e.g., asking for login)?")
         if user_validated_reset:
             result.test_result = "PASS"
             line = "[RESULT] PASS — User confirmed the app was reset to its initial state."
@@ -6195,7 +6199,7 @@ def run_install_region_specific_app_check(dab_topic, test_name, tester, device_i
         line = "[STEP] Manual action required: Please set the device's region/locale to a supported one for the test app (e.g., 'de-DE')."
         LOGGER.result(line)
         logs.append(line)
-        if not yes_or_no(result, logs, "Is the device's region set correctly for the test?"):
+        if not yes_or_no("Is the device's region set correctly for the test?"):
             result.test_result = "SKIPPED"
             line = "[RESULT] SKIPPED — Precondition failed: device region not set."
             LOGGER.result(line)
@@ -6230,7 +6234,7 @@ def run_install_region_specific_app_check(dab_topic, test_name, tester, device_i
         time.sleep(APP_LAUNCH_WAIT)
 
         # Step 4: Manual verification
-        user_validated_localization = yes_or_no(result, logs, "Does the app show the correct language, content, or features for the region you set?")
+        user_validated_localization = yes_or_no("Does the app show the correct language, content, or features for the region you set?")
         if user_validated_localization:
             result.test_result = "PASS"
             line = "[RESULT] PASS — User confirmed the app shows correct localization."
@@ -6305,7 +6309,7 @@ def run_update_installed_app_check(dab_topic, test_name, tester, device_id):
         line = f"[STEP] Manual action required: Please ensure an OLDER version of the app '{app_id}' is installed."
         LOGGER.result(line)
         logs.append(line)
-        if not yes_or_no(result, logs, "Is an older version of the app installed and ready for an update?"):
+        if not yes_or_no("Is an older version of the app installed and ready for an update?"):
             result.test_result = "SKIPPED"
             line = "[RESULT] SKIPPED — Precondition failed: an older version of the app was not installed."
             LOGGER.result(line)
@@ -6340,7 +6344,7 @@ def run_update_installed_app_check(dab_topic, test_name, tester, device_id):
         time.sleep(APP_LAUNCH_WAIT)
 
         # Step 4: Manual verification
-        user_validated_update = yes_or_no(result, logs, "Has the app been successfully updated to the newer version?")
+        user_validated_update = yes_or_no("Has the app been successfully updated to the newer version?")
         if user_validated_update:
             result.test_result = "PASS"
             line = "[RESULT] PASS — User confirmed the app was successfully updated."
@@ -6519,7 +6523,7 @@ def run_logs_collection_for_major_system_services_check(dab_topic, test_name, te
 
         validate_state = False
         while(validate_state == False):
-            validate_state = yes_or_no(result, logs, f"Complete the above operations?")
+            validate_state = yes_or_no(f"Complete the above operations?")
 
         # Step 3: Waiting for 10 seconds to collect logs.
         line = f"[STEP] Waiting for {LOGS_COLLECTION_WAIT} seconds to collect logs."
@@ -6559,7 +6563,7 @@ def run_logs_collection_for_major_system_services_check(dab_topic, test_name, te
         LOGGER.result(line)
         logs.append(line)
         print(f"Please enter logs folder and verify logs about major system services.")
-        validate_state = yes_or_no(result, logs, f"Logs collaction includes AV Decoder, Power Manager, and Networking Module?")
+        validate_state = yes_or_no(f"Logs collaction includes AV Decoder, Power Manager, and Networking Module?")
         if validate_state == True:
             print(f"Logs collection includes major system services.")
             logs.append(f"[PASS] Logs collection includes major system services.")
@@ -6685,7 +6689,7 @@ def run_logs_collection_app_pause_check(dab_topic, test_name, tester, device_id)
         LOGGER.result(line)
         logs.append(line)
         print(f"Please enter logs folder and verify logs about application '{appId}'.")
-        validate_state = yes_or_no(result, logs, f"Logs collaction includes pausing application '{appId}'?")
+        validate_state = yes_or_no(f"Logs collaction includes pausing application '{appId}'?")
         if validate_state == True:
             print(f"Logs collection includes pausing application '{appId}'.")
             logs.append(f"[PASS] Logs collection includes pausing application '{appId}'.")
@@ -6826,7 +6830,7 @@ def run_logs_collection_app_force_stop_check(dab_topic, test_name, tester, devic
         LOGGER.result(line)
         logs.append(line)
         print(f"Please enter logs folder and verify logs about application '{appId}'.")
-        validate_state = yes_or_no(result, logs, f"Logs collaction includes force stop application '{appId}'?")
+        validate_state = yes_or_no(f"Logs collaction includes force stop application '{appId}'?")
         if validate_state == True:
             print(f"Logs collection includes force stop application '{appId}'.")
             logs.append(f"[PASS] Logs collection includes force stop application '{appId}'.")
@@ -6957,7 +6961,7 @@ def run_logs_collection_app_uninstall_check(dab_topic, test_name, tester, device
         LOGGER.result(line)
         logs.append(line)
         print(f"Please enter logs folder and verify logs about application '{appId}'.")
-        validate_state = yes_or_no(result, logs, f"Logs collection includes application '{appId}' uninstallation log?")
+        validate_state = yes_or_no(f"Logs collection includes application '{appId}' uninstallation log?")
         if validate_state == True:
             print(f"Logs collection includes application '{appId}' uninstallation log.")
             logs.append(f"[PASS] Logs collection includes application '{appId}' uninstallation log.")
@@ -7116,7 +7120,7 @@ def run_logs_collection_app_install_and_launch_check(dab_topic, test_name, teste
         LOGGER.result(line)
         logs.append(line)
         print(f"Please enter logs folder and verify logs about application '{appId}'.")
-        validate_state = yes_or_no(result, logs, f"Logs collaction includes application '{appId}' install and launch log?")
+        validate_state = yes_or_no(f"Logs collaction includes application '{appId}' install and launch log?")
         if validate_state == True:
             print(f"Logs collection includes application '{appId}' install and launch log.")
             logs.append(f"[PASS] Logs collection includes application '{appId}' install and launch log.")
@@ -7852,7 +7856,7 @@ def run_power_mode_get_adaptive_support_check(dab_topic, test_name, tester, devi
         # Header
         for line in (
             f"[TEST] Power Mode GET — Adaptive Support Check (test_id={test_id}, device={device_id})",
-            "[DESC] If supported → expect 200 and a 'mode' string; if unsupported → expect 501 with clear message.",
+            "[DESC] If supported → expect 200 and a 'powerMode' string; if unsupported → expect 501 with clear message.",
             "[DESC] No prompts; auto-detect support.",
         ):
             LOGGER.result(line); logs.append(line)
@@ -7884,19 +7888,19 @@ def run_power_mode_get_adaptive_support_check(dab_topic, test_name, tester, devi
         # Support path
         if validate_code == ValidateCode.SUPPORT:
             if status == 200 and json_ok and isinstance(obj, dict):
-                mode_val = str(obj.get("mode", "UNKNOWN"))
+                mode_val = str(obj.get("powerMode", "UNKNOWN"))
                 if mode_val and mode_val != "UNKNOWN":
                     result.test_result = "PASS"
                     line = f"[RESULT] PASS — supported: status=200 with mode='{mode_val}'."
                     LOGGER.result(line); logs.append(line)
                 else:
                     result.test_result = "FAILED"
-                    line = f"[RESULT] FAILED — supported: missing/invalid 'mode' in body. Resp={raw_resp}"
+                    line = f"[RESULT] FAILED — supported: missing/invalid 'powerMode' in body. Resp={raw_resp}"
                     LOGGER.result(line); logs.append(line)
             elif 200 <= (status or 0) < 300:
                 # 2xx but body bad
                 result.test_result = "FAILED"
-                line = f"[RESULT] FAILED — supported: status={status} but invalid/absent JSON or 'mode'. Resp={raw_resp}"
+                line = f"[RESULT] FAILED — supported: status={status} but invalid/absent JSON or 'powerMode'. Resp={raw_resp}"
                 LOGGER.result(line); logs.append(line)
             elif status == 501:
                 # Inconsistent with checker; still judge by response
@@ -8032,7 +8036,7 @@ def run_power_mode_transition_standby_to_active(dab_topic, test_name, tester, de
             body = json.loads(resp) if resp else {}
         except Exception:
             body = {}
-        current_mode = str(body.get("mode", "UNKNOWN"))
+        current_mode = str(body.get("powerMode", "UNKNOWN"))
 
         LOGGER.result(f"[INFO] Current mode: {current_mode}")
         logs.append(f"[INFO] Current mode: {current_mode}")
@@ -8042,7 +8046,7 @@ def run_power_mode_transition_standby_to_active(dab_topic, test_name, tester, de
             logs.append("[PRECHECK] Not Active; setting to Active to satisfy precondition")
 
             rc, resp = execute_cmd_and_log(
-                tester, device_id, "system/power-mode/set", json.dumps({"mode": MODE_ACTIVE}), logs, result
+                tester, device_id, "system/power-mode/set", json.dumps({"powerMode": MODE_ACTIVE}), logs, result
             )
             if dab_status_from(resp, rc) != 200:
                 result.test_result = "FAILED"
@@ -8063,7 +8067,7 @@ def run_power_mode_transition_standby_to_active(dab_topic, test_name, tester, de
                 body = json.loads(resp) if resp else {}
             except Exception:
                 body = {}
-            pre_mode = str(body.get("mode", "UNKNOWN"))
+            pre_mode = str(body.get("powerMode", "UNKNOWN"))
 
             if pre_mode != MODE_ACTIVE:
                 result.test_result = "FAILED"
@@ -8078,7 +8082,7 @@ def run_power_mode_transition_standby_to_active(dab_topic, test_name, tester, de
         LOGGER.result("[STEP] Setting power mode → Standby")
         logs.append("[STEP] Setting power mode → Standby")
         rc, resp = execute_cmd_and_log(
-            tester, device_id, "system/power-mode/set", json.dumps({"mode": MODE_STANDBY}), logs, result
+            tester, device_id, "system/power-mode/set", json.dumps({"powerMode": MODE_STANDBY}), logs, result
         )
         if dab_status_from(resp, rc) != 200:
             result.test_result = "FAILED"
@@ -8095,7 +8099,7 @@ def run_power_mode_transition_standby_to_active(dab_topic, test_name, tester, de
         LOGGER.result("[STEP] Setting power mode → Active")
         logs.append("[STEP] Setting power mode → Active")
         rc, resp = execute_cmd_and_log(
-            tester, device_id, "system/power-mode/set", json.dumps({"mode": MODE_ACTIVE}), logs, result
+            tester, device_id, "system/power-mode/set", json.dumps({"powerMode": MODE_ACTIVE}), logs, result
         )
         if dab_status_from(resp, rc) != 200:
             result.test_result = "FAILED"
@@ -8117,7 +8121,7 @@ def run_power_mode_transition_standby_to_active(dab_topic, test_name, tester, de
                 body = json.loads(resp) if resp else {}
             except Exception:
                 body = {}
-            final_mode = str(body.get("mode", "UNKNOWN"))
+            final_mode = str(body.get("powerMode", "UNKNOWN"))
 
             if final_mode == MODE_ACTIVE:
                 result.test_result = "PASS"
@@ -8379,10 +8383,9 @@ def run_set_contrast_to_max(dab_topic, test_name, tester, device_id):
 
             # Optional manual visual confirmation
             if yes_or_no(
-                result,
-                logs,
                 "Is the device screen at maximum contrast visually "
                 "(should appear with very strong contrast)? ",
+                logs,
             ):
                 result.test_result = "PASS"
             else:
@@ -8698,7 +8701,7 @@ def run_contrast_rapid_change_min_to_max(dab_topic, test_name, tester, device_id
             logs.append(LOGGER.stamp(msg))
 
             # Optional manual visual confirmation
-            if yes_or_no(result, logs, "Did the screen visibly update to maximum contrast immediately after the change? ",):
+            if yes_or_no("Did the screen visibly update to maximum contrast immediately after the change? ",):
                 result.test_result = "PASS"
             else:
                 result.test_result = "FAILED"
@@ -9112,7 +9115,7 @@ def run_power_mode_case_sensitive_negative(dab_topic, test_name, tester, device_
         LOGGER.result("[STEP] Setting power-mode to 'Active'.")
         logs.append(LOGGER.stamp("[STEP] Setting power-mode to 'Active'."))
 
-        payload_active = json.dumps({"mode": "Active"})
+        payload_active = json.dumps({"powerMode": "Active"})
         status1, _ = execute_cmd_and_log(tester, device_id, "system/power-mode/set", payload_active, logs, result)
         if status1 != 200:
             msg = f"[FAILED] Unable to set power mode to 'Active'. Status={status1}"
@@ -9152,7 +9155,7 @@ def run_power_mode_case_sensitive_negative(dab_topic, test_name, tester, device_
         _, resp2 = execute_cmd_and_log(tester, device_id, "system/power-mode/get", "{}", logs, result)
         try:
             parsed = json.loads(resp2) if isinstance(resp2, str) else resp2
-            active_mode = parsed.get("mode")
+            active_mode = parsed.get("powerMode")
         except Exception:
             active_mode = None
 
@@ -9191,7 +9194,7 @@ def run_power_mode_case_sensitive_negative(dab_topic, test_name, tester, device_
         LOGGER.result("[STEP] Sending invalid power-mode payload with lowercase 'standby'.")
         logs.append(LOGGER.stamp("[STEP] Sending invalid power-mode payload with lowercase 'standby'."))
 
-        payload_invalid = json.dumps({"mode": "standby"})
+        payload_invalid = json.dumps({"powerMode": "standby"})
         status_invalid, resp3 = execute_cmd_and_log(tester, device_id, "system/power-mode/set", payload_invalid, logs, result)
 
         if status_invalid == 400:
@@ -9234,7 +9237,7 @@ def run_power_mode_case_sensitive_negative(dab_topic, test_name, tester, device_
         _, resp4 = execute_cmd_and_log(tester, device_id, "system/power-mode/get", "{}", logs, result)
         try:
             parsed = json.loads(resp4) if isinstance(resp4, str) else resp4
-            final_mode = parsed.get("mode")
+            final_mode = parsed.get("powerMode")
         except Exception:
             final_mode = None
 
@@ -9279,7 +9282,7 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
     DAB 2.1 NEGATIVE TEST:
       - Set power-mode to "Active" (should succeed)
       - Confirm mode is "Active"
-      - Send system/power-mode/set WITHOUT 'mode' parameter (should fail)
+      - Send system/power-mode/set WITHOUT 'powerMode' parameter (should fail)
       - Confirm error (status=400)
       - Confirm mode remains "Active"
     """
@@ -9294,9 +9297,9 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
 
     # --- Header --------------------------------------------------------------
     for line in (
-        f"[TEST] Power Mode Missing 'mode' Parameter (Negative) — {test_name} "
+        f"[TEST] Power Mode Missing 'powerMode' Parameter (Negative) — {test_name} "
         f"(test_id={test_id}, device={device_id})",
-        "[DESC] Goal: send system/power-mode/set without 'mode' and ensure 400 and no mode change.",
+        "[DESC] Goal: send system/power-mode/set without 'powerMode' and ensure 400 and no mode change.",
         "[DESC] Preconditions: device powered on, DAB reachable, power-mode get/set supported.",
     ):
         LOGGER.result(line)
@@ -9305,7 +9308,7 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
     cap = "ops: system/power-mode/set, system/power-mode/get"
     if not require_capabilities(tester, device_id, cap, result, logs):
         summary = (
-            f"[SUMMARY] Power Mode Missing 'mode' Parameter (Negative) — final result: "
+            f"[SUMMARY] Power Mode Missing 'powerMode' Parameter (Negative) — final result: "
             f"{result.test_result}, test_id={test_id}, device={device_id}"
         )
         LOGGER.result(summary)
@@ -9317,7 +9320,7 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
         LOGGER.result("[STEP] Setting power-mode to 'Active' precondition.")
         logs.append(LOGGER.stamp("[STEP] Setting power-mode to 'Active' precondition."))
 
-        payload_active = json.dumps({"mode": "Active"})
+        payload_active = json.dumps({"powerMode": "Active"})
         status1, _ = execute_cmd_and_log(tester, device_id, "system/power-mode/set", payload_active, logs, result)
         if status1 != 200:
             msg = f"[FAILED] Unable to set power mode to 'Active'. Status={status1}"
@@ -9326,7 +9329,7 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
             result.test_result = "FAILED"
 
             summary = (
-                f"[SUMMARY] Power Mode Missing 'mode' Parameter (Negative) — final result: "
+                f"[SUMMARY] Power Mode Missing 'powerMode' Parameter (Negative) — final result: "
                 f"{result.test_result}, test_id={test_id}, device={device_id}"
             )
             LOGGER.result(summary)
@@ -9342,7 +9345,7 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
         result.test_result = "SKIPPED"
 
         summary = (
-            f"[SUMMARY] Power Mode Missing 'mode' Parameter (Negative) — final result: "
+            f"[SUMMARY] Power Mode Missing 'powerMode' Parameter (Negative) — final result: "
             f"{result.test_result}, test_id={test_id}, device={device_id}"
         )
         LOGGER.result(summary)
@@ -9357,7 +9360,7 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
         _, resp2 = execute_cmd_and_log(tester, device_id, "system/power-mode/get", "{}", logs, result)
         try:
             parsed = json.loads(resp2) if isinstance(resp2, str) else resp2
-            active_mode = parsed.get("mode")
+            active_mode = parsed.get("powerMode")
         except Exception:
             active_mode = None
 
@@ -9368,7 +9371,7 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
             result.test_result = "FAILED"
 
             summary = (
-                f"[SUMMARY] Power Mode Missing 'mode' Parameter (Negative) — final result: "
+                f"[SUMMARY] Power Mode Missing 'powerMode' Parameter (Negative) — final result: "
                 f"{result.test_result}, test_id={test_id}, device={device_id}"
             )
             LOGGER.result(summary)
@@ -9384,33 +9387,33 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
         result.test_result = "SKIPPED"
 
         summary = (
-            f"[SUMMARY] Power Mode Missing 'mode' Parameter (Negative) — final result: "
+            f"[SUMMARY] Power Mode Missing 'powerMode' Parameter (Negative) — final result: "
             f"{result.test_result}, test_id={test_id}, device={device_id}"
         )
         LOGGER.result(summary)
         logs.append(LOGGER.stamp(summary))
         return result
 
-    # STEP 3: Send system/power-mode/set WITHOUT 'mode' field
+    # STEP 3: Send system/power-mode/set WITHOUT 'powerMode' field
     try:
-        LOGGER.result("[STEP] Sending system/power-mode/set without 'mode' parameter.")
-        logs.append(LOGGER.stamp("[STEP] Sending system/power-mode/set without 'mode' parameter."))
+        LOGGER.result("[STEP] Sending system/power-mode/set without 'powerMode' parameter.")
+        logs.append(LOGGER.stamp("[STEP] Sending system/power-mode/set without 'powerMode' parameter."))
 
-        payload_missing = json.dumps({})  # No 'mode' key
+        payload_missing = json.dumps({})  # No 'powerMode' key
         status_missing, _ = execute_cmd_and_log(tester, device_id, "system/power-mode/set", payload_missing, logs, result)
 
         if status_missing == 400:
-            msg = "[RESULT] PASS (negative) — Device correctly rejected missing 'mode' parameter with 400 BAD REQUEST."
+            msg = "[RESULT] PASS (negative) — Device correctly rejected missing 'powerMode' parameter with 400 BAD REQUEST."
             LOGGER.result(msg)
             logs.append(LOGGER.stamp(msg))
         else:
-            msg = f"[RESULT] FAILED — Expected status 400 for missing 'mode', got {status_missing}."
+            msg = f"[RESULT] FAILED — Expected status 400 for missing 'powerMode', got {status_missing}."
             LOGGER.error(msg)
             logs.append(LOGGER.stamp(msg))
             result.test_result = "FAILED"
 
             summary = (
-                f"[SUMMARY] Power Mode Missing 'mode' Parameter (Negative) — final result: "
+                f"[SUMMARY] Power Mode Missing 'powerMode' Parameter (Negative) — final result: "
                 f"{result.test_result}, test_id={test_id}, device={device_id}"
             )
             LOGGER.result(summary)
@@ -9424,7 +9427,7 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
         result.test_result = "SKIPPED"
 
         summary = (
-            f"[SUMMARY] Power Mode Missing 'mode' Parameter (Negative) — final result: "
+            f"[SUMMARY] Power Mode Missing 'powerMode' Parameter (Negative) — final result: "
             f"{result.test_result}, test_id={test_id}, device={device_id}"
         )
         LOGGER.result(summary)
@@ -9439,7 +9442,7 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
         _, resp4 = execute_cmd_and_log(tester, device_id, "system/power-mode/get", "{}", logs, result)
         try:
             parsed = json.loads(resp4) if isinstance(resp4, str) else resp4
-            after_mode = parsed.get("mode")
+            after_mode = parsed.get("powerMode")
         except Exception:
             after_mode = None
 
@@ -9462,7 +9465,7 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
         result.test_result = "SKIPPED"
 
         summary = (
-            f"[SUMMARY] Power Mode Missing 'mode' Parameter (Negative) — final result: "
+            f"[SUMMARY] Power Mode Missing 'powerMode' Parameter (Negative) — final result: "
             f"{result.test_result}, test_id={test_id}, device={device_id}"
         )
         LOGGER.result(summary)
@@ -9471,7 +9474,7 @@ def run_power_mode_set_missing_param(dab_topic, test_name, tester, device_id):
 
     # FINAL SUMMARY
     summary = (
-        f"[SUMMARY] Power Mode Missing 'mode' Parameter (Negative) — final result: "
+        f"[SUMMARY] Power Mode Missing 'powerMode' Parameter (Negative) — final result: "
         f"{result.test_result}, test_id={test_id}, device={device_id}"
     )
     LOGGER.result(summary)
@@ -9522,7 +9525,7 @@ def run_power_mode_active_to_standby_check(dab_topic, test_name, tester, device_
         LOGGER.result("[STEP] Ensuring device is in 'Active' mode (precondition).")
         logs.append(LOGGER.stamp("[STEP] Ensuring device is in 'Active' mode (precondition)."))
 
-        payload_active = json.dumps({"mode": "Active"})
+        payload_active = json.dumps({"powerMode": "Active"})
         status1, _ = execute_cmd_and_log(tester, device_id, "system/power-mode/set", payload_active, logs, result)
         if status1 != 200:
             msg = f"[FAILED] Could not set to 'Active' precondition. Status={status1}"
@@ -9541,7 +9544,7 @@ def run_power_mode_active_to_standby_check(dab_topic, test_name, tester, device_
         _, resp2 = execute_cmd_and_log(tester, device_id, "system/power-mode/get", "{}", logs, result)
         try:
             parsed = json.loads(resp2) if isinstance(resp2, str) else resp2
-            pre_mode = parsed.get("mode")
+            pre_mode = parsed.get("powerMode")
         except Exception:
             pre_mode = None
 
@@ -9580,7 +9583,7 @@ def run_power_mode_active_to_standby_check(dab_topic, test_name, tester, device_
         LOGGER.result("[STEP] Setting power-mode to 'Standby'.")
         logs.append(LOGGER.stamp("[STEP] Setting power-mode to 'Standby'."))
 
-        payload_standby = json.dumps({"mode": "Standby"})
+        payload_standby = json.dumps({"powerMode": "Standby"})
         status2, _ = execute_cmd_and_log(tester, device_id, "system/power-mode/set", payload_standby, logs, result)
         if status2 != 200:
             msg = f"[FAILED] Could not set power mode to 'Standby'. Status={status2}"
@@ -9620,7 +9623,7 @@ def run_power_mode_active_to_standby_check(dab_topic, test_name, tester, device_
         _, resp3 = execute_cmd_and_log(tester, device_id, "system/power-mode/get", "{}", logs, result)
         try:
             parsed = json.loads(resp3) if isinstance(resp3, str) else resp3
-            after_mode = parsed.get("mode")
+            after_mode = parsed.get("powerMode")
         except Exception:
             after_mode = None
 
@@ -9970,7 +9973,7 @@ def run_voice_multilanguage_language_alignment_check(dab_topic, test_name, teste
         LOGGER.result(line)
         logs.append(line)
 
-        user_ok = yes_or_no(result, logs, question)
+        user_ok = yes_or_no(question)
         if not user_ok:
             result.test_result = "FAILED"
             line = (
@@ -10760,8 +10763,8 @@ def run_identifier_for_advertising_unsupported_device_ui_absence_check(dab_topic
             "Press 'y' if you SEE an ID, 'n' if there is NO Advertising ID shown."
         )
 
-        # yes_or_no should be called as yes_or_no(result, logs, prompt)
-        saw_id = yes_or_no(result, logs, prompt)
+        # yes_or_no should be called as yes_or_no(prompt)
+        saw_id = yes_or_no(prompt)
         user_saw_ad_id = "Y" if saw_id else "N"
 
         if saw_id:
@@ -10852,7 +10855,7 @@ def run_youtube_recommended_movie_playback_check(dab_topic, test_name, tester, d
             "Is the device on the home screen with a logged-in YouTube account, "
             "and is at least one movie visible in the home recommendations row?"
         )
-        if not yes_or_no(precondition_prompt, logs):
+        if not yes_or_no(precondition_prompt):
             summary = "Preconditions not met: YouTube not ready or no movie visible in recommendations."
             LOGGER.result(f"[RESULT] OPTIONAL_FAILED – {summary}")
             result.test_result = "OPTIONAL_FAILED"
@@ -11004,7 +11007,7 @@ def run_youtube_recommended_movie_playback_check(dab_topic, test_name, tester, d
             "On the TV, did YouTube launch and start playing the recommended movie? "
             "(You should see video motion and hear audio for the selected content.)"
         )
-        if not yes_or_no(verify_prompt, logs):
+        if not yes_or_no(verify_prompt):
             summary = "Manual verification failed: YouTube did not launch or playback did not start as expected."
             LOGGER.result(f"[RESULT] FAILED – {summary}")
             result.test_result = "FAILED"
@@ -11136,7 +11139,7 @@ def run_identifier_for_advertising_reset_generates_new_value_check(dab_topic, te
             "Advertising ID), and perform the 'Reset advertising ID' action.\n"
             "After you have completed the reset, press 'y' to continue, or 'n' if you could not perform the reset."
         )
-        if not yes_or_no(reset_prompt, logs):
+        if not yes_or_no(reset_prompt):
             summary = "Tester could not perform advertising ID reset; test not executed fully."
             LOGGER.result(f"[RESULT] OPTIONAL_FAILED – {summary}")
             result.test_result = "OPTIONAL_FAILED"
