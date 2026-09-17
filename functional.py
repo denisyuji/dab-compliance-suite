@@ -9612,7 +9612,7 @@ def run_power_mode_active_to_standby_check(dab_topic, test_name, tester, device_
       - Ensure device is in "Active"
       - Set power mode to "Standby"
       - Confirm power mode is now "Standby"
-      - Confirm DAB is still alive by running a simple op (e.g., system/settings/get)
+      - Confirm DAB is still alive by running a simple op (device/info)
     """
 
     test_id = to_test_id(f"{dab_topic}/{test_name}")
@@ -9628,12 +9628,12 @@ def run_power_mode_active_to_standby_check(dab_topic, test_name, tester, device_
         f"[TEST] Power Mode Transition Active→Standby + DAB Liveness — {test_name} "
         f"(test_id={test_id}, device={device_id})",
         "[DESC] Goal: validate transition Active→Standby and confirm DAB remains responsive.",
-        "[DESC] Preconditions: device powered on, DAB reachable, power-mode and system/settings/get supported.",
+        "[DESC] Preconditions: device powered on, DAB reachable, power-mode and device/info supported.",
     ):
         LOGGER.result(line)
         logs.append(LOGGER.stamp(line))
 
-    cap = "ops: system/power-mode/set, system/power-mode/get, system/settings/get"
+    cap = "ops: system/power-mode/set, system/power-mode/get, device/info"
     if not require_capabilities(tester, device_id, cap, result, logs):
         summary = (
             f"[SUMMARY] Power Mode Transition Active→Standby + DAB Liveness — final result: "
@@ -9780,16 +9780,16 @@ def run_power_mode_active_to_standby_check(dab_topic, test_name, tester, device_
         logs.append(LOGGER.stamp(summary))
         return result
 
-    # STEP 4: Confirm DAB liveness by system/settings/get
+    # STEP 4: Confirm DAB liveness by device/info
     try:
-        LOGGER.result("[STEP] Checking DAB liveness via system/settings/get (highContrastText).")
-        logs.append(LOGGER.stamp("[STEP] Checking DAB liveness via system/settings/get (highContrastText)."))
+        LOGGER.result("[STEP] Checking DAB liveness via device/info.")
+        logs.append(LOGGER.stamp("[STEP] Checking DAB liveness via device/info."))
 
         dab_status, resp4 = execute_cmd_and_log(
-            tester, device_id, "system/settings/get", json.dumps({"id": "highContrastText"}), logs, result
+            tester, device_id, "device/info", "{}", logs, result
         )
         if dab_status == 200:
-            msg = "[PASS] DAB subsystem responded to system/settings/get after Standby. DAB is alive."
+            msg = "[PASS] DAB subsystem responded to device/info after Standby. DAB is alive."
             LOGGER.result(msg)
             logs.append(LOGGER.stamp(msg))
             if result.test_result == "UNKNOWN":
