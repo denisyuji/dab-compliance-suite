@@ -72,7 +72,7 @@ def require_capabilities(tester, device_id, spec, result=None, logs=None):
 
     Uses DabChecker to precheck and populate caches for:
       - operations/list    → is_operation_supported(...)
-      - system/settings/list → precheck('system/settings/set', {"setting_key": "dummy_val"})
+      - system/settings/list → is_setting_supported(device_id, 'setting_key')
       - input/key/list       → precheck('input/key-press', {"keyCode":"KEY_HOME"})
       - voice/list           → precheck('voice/set', {"voiceSystem":{"name":"__probe__","enabled":True}})
 
@@ -103,8 +103,8 @@ def require_capabilities(tester, device_id, spec, result=None, logs=None):
 
         # ---------- Settings gate (system/settings/list) ----------
         for setting in sorted(set_req):
-            # Use a dummy value; precheck only cares about the key's descriptor in the settings list
-            validate_code, _ = checker.precheck(device_id, "system/settings/set", json.dumps({setting: True}))
+            # Only the presence of the key in settings/list matters here, not a value
+            validate_code, _ = checker.is_setting_supported(device_id, setting)
             if validate_code != ValidateCode.SUPPORT:
                 msg = f"[OPTIONAL_FAILED] Required setting not supported: {setting}"
                 LOGGER.warn(msg)
