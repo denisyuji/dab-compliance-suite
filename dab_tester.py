@@ -915,6 +915,12 @@ class DabTester:
                                 test_id, device_id, dab_topic, "{}", "SKIPPED", "",
                                 ["Functional test returned no result object."]
                             )
+                        # A request without response is a failure, even when the
+                        # test's generic exception handler reported SKIPPED.
+                        # PASS is kept: polling loops expect timeouts while rebooting.
+                        if getattr(result, "no_response", False) and getattr(result, "test_result", None) in ("SKIPPED", "UNKNOWN"):
+                            result.test_result = "FAILED"
+                            log(result, "[FAILED] A DAB request received no response.")
                         result_list.append(result)
                         # derive outcome for the end marker
                         outcome_for_end = getattr(result, "test_result", None) or getattr(result, "outcome", "UNKNOWN")

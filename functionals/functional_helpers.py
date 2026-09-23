@@ -21,6 +21,11 @@ class UnsupportedOperationError(Exception):
         self.topic = topic
         super().__init__(f"DAB operation '{topic}' is not supported by the device.")
 
+class NoResponseError(Exception):
+    def __init__(self, topic):
+        self.topic = topic
+        super().__init__(f"No response received for DAB operation '{topic}'.")
+
 # === Capability-gate helpers (non-breaking additions) =========================
 def _split_items(s: str):
     return [x.strip() for x in s.split(",") if x and x.strip()]
@@ -183,6 +188,18 @@ def execute_cmd_and_log(tester, device_id, topic, payload, logs=None, result=Non
     else:
         resp_json = json.dumps({"status": rc, "raw": None if resp is None else str(resp)})
 
+    # A timeout must not look like an error status, or negative checks such
+    # as "status != 200" would pass a device that never answers.
+    if not resp:
+        line = f"[FAILED] No response received for '{topic}'."
+        LOGGER.warn(line)
+        if logs is not None: logs.append(line)
+        if result is not None:
+            result.test_result = "FAILED"
+            # Tests often turn exceptions into SKIPPED; the runner restores FAILED
+            result.no_response = True
+        raise NoResponseError(topic)
+
     # Log
     resp_line = f"[{topic}] Response: {resp_json}"
     LOGGER.info(resp_line)
@@ -202,14 +219,16 @@ def execute_cmd_and_log(tester, device_id, topic, payload, logs=None, result=Non
     return status_code, resp_json
 
 def dab_status_from(resp, rc):
+    # rc is only 0/1 (success/failure), never a DAB status; return None when
+    # the response carries no status so the caller reports it.
     try:
         if isinstance(resp, str):    # JSON string
-            return json.loads(resp).get("status", rc)
+            return json.loads(resp).get("status")
         if isinstance(resp, dict):   # dict
-            return resp.get("status", rc)
+            return resp.get("status")
     except Exception:
         pass
-    return rc
+    return None
 
 def print_response(response, topic_for_color=None, indent=10):
     if isinstance(response, str):
