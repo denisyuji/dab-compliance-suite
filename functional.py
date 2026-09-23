@@ -10449,7 +10449,12 @@ def run_timezone_case_insensitive_america_los_angeles_check(dab_topic, test_name
     result = TestResult(test_id, device_id, dab_topic, "{}", "UNKNOWN", "", logs)
 
     LOGGER.result("[TEST] TimeZone case-insensitive IANA validation (america/los_angeles → America/Los_Angeles)")
-    LOGGER.result("[DESC] Verify that system/settings/set accepts a lower-case IANA timeZone and returns the canonical form via system/settings/get.")
+    # The spec (4, Data Types) only requires IANA tzdb names, whose IDs are
+    # case-sensitive, and does not say how a non-canonical name is handled.
+    # Both answers are compliant: reject it with 400 and keep the setting, or
+    # accept it and store the canonical name. Storing the raw lower-case
+    # string would make system/settings/get return a non-IANA value.
+    LOGGER.result("[DESC] Verify that system/settings/set either rejects a lower-case IANA timeZone with 400 or stores its canonical form.")
 
     # --- Step 1: Capability check (timeZone setting support) ---
     cap_spec = "ops: system/settings/get, system/settings/set | settings: timeZone"
@@ -10480,8 +10485,28 @@ def run_timezone_case_insensitive_america_los_angeles_check(dab_topic, test_name
         # 3) Set using lower-case IANA value
         LOGGER.result(f"[STEP] Setting timeZone to lower-case IANA value {input_tz!r}.")
         set_status, _ = execute_cmd_and_log(tester, device_id, "system/settings/set", json.dumps({"timeZone": input_tz}), logs, result, adjust_payload=False)
+        if set_status == 400:
+            after_status, after_body = execute_cmd_and_log(tester, device_id, "system/settings/get", "{}", logs, result)
+            current_tz = json.loads(after_body).get("timeZone") if after_status == 200 else None
+            if current_tz != original_tz:
+                summary = f"lower-case timeZone was rejected with 400, but timeZone changed from {original_tz!r} to {current_tz!r}."
+                LOGGER.result(f"[RESULT] FAILED – {summary}")
+                result.test_result = "FAILED"
+                logs.append(summary)
+                summary_line = f"[SUMMARY] {test_name} — final result: FAILED, test_id={test_id}, device={device_id}"
+                LOGGER.result(summary_line)
+                logs.append(summary_line)
+                return result
+            summary = f"Device rejects non-canonical timeZone {input_tz!r} with 400 and keeps {original_tz!r}."
+            LOGGER.result(f"[SUMMARY] PASS – {summary}")
+            result.test_result = "PASS"
+            logs.append(summary)
+            summary_line = f"[SUMMARY] {test_name} — final result: PASS, test_id={test_id}, device={device_id}"
+            LOGGER.result(summary_line)
+            logs.append(summary_line)
+            return result
         if set_status != 200:
-            summary = f"system/settings/set for lower-case timeZone returned status {set_status}; expected 200."
+            summary = f"system/settings/set for lower-case timeZone returned status {set_status}; expected 200 or 400."
             LOGGER.result(f"[RESULT] FAILED – {summary}")
             result.test_result = "FAILED"
             logs.append(summary)
