@@ -435,8 +435,10 @@ def get_supported_setting(tester, device_id, key, result, logs):
 # === New Helper Function to Check Minimum Screensaver Timeout ===
 def check_min_screensaver_timeout(tester, device_id, result, logs):
     """
-    Checks if the device's min screensaver timeout is less than 60s.
-    If it's >= 60s or unsupported, marks the test as OPTIONAL_FAILED to save time.
+    Checks the device's min screensaver timeout against the suite's idle wait.
+    The spec caps screenSaverMinTimeout at 60s, so a larger value is FAILED.
+    If the minimum is above SCREENSAVER_TIMEOUT_WAIT, the device would rightly
+    reject the timeout the tests set, so the test is OPTIONAL_FAILED.
     Returns True if the test should proceed, False otherwise.
     """
     min_timeout, _ = get_supported_setting(tester, device_id, "screenSaverMinTimeout", result, logs)
@@ -448,10 +450,17 @@ def check_min_screensaver_timeout(tester, device_id, result, logs):
 
     try:
         min_timeout_val = int(min_timeout)
-        if min_timeout_val >= 60:
+        if min_timeout_val > 60:
+            result.test_result = "FAILED"
+            line = (f"[RESULT] FAILED — Device minimum screensaver timeout ({min_timeout_val}s) "
+                    f"is above the 60s maximum allowed by the spec.")
+            LOGGER.warn(line)
+            logs.append(line)
+            return False
+        if min_timeout_val > SCREENSAVER_TIMEOUT_WAIT:
             result.test_result = "OPTIONAL_FAILED"
             line = (f"[RESULT] OPTIONAL_FAILED — Device minimum screensaver timeout ({min_timeout_val}s) "
-                    f"is >= 60s. Optimizing for execution time; this test has been strategically omitted.")
+                    f"is above the {SCREENSAVER_TIMEOUT_WAIT}s timeout this test sets; test omitted.")
             LOGGER.warn(line)
             logs.append(line)
             return False
@@ -462,7 +471,7 @@ def check_min_screensaver_timeout(tester, device_id, result, logs):
         logs.append(line)
         return False
 
-    # If we get here, the timeout is valid and < 60s
+    # If we get here, the test timeout is accepted by the device
     return True
 
 # ---- shared helper: build install targets from config or local artifacts ----
@@ -2356,7 +2365,7 @@ def run_screensavermintimeout_reboot_check(dab_topic, test_name, tester, device_
         LOGGER.result(line)
         logs.append(line)
         min_timeout_before, result = get_supported_setting(tester, device_id, "screenSaverMinTimeout", result, logs)
-        if not min_timeout_before:
+        if min_timeout_before is None:
             return result
         line = f"[INFO] Value before reboot: {min_timeout_before}"
         LOGGER.info(line)
@@ -2380,8 +2389,17 @@ def run_screensavermintimeout_reboot_check(dab_topic, test_name, tester, device_
         line = "[STEP] Getting the minimum screensaver timeout after reboot."
         LOGGER.result(line)
         logs.append(line)
+        # Re-read settings/list from the device; the cached copy predates the reboot
+        status_list, resp_list = execute_cmd_and_log(tester, device_id, "system/settings/list", "{}", logs, result)
+        if status_list != 200:
+            result.test_result = "FAILED"
+            line = f"[RESULT] FAILED — system/settings/list returned {status_list} after reboot."
+            LOGGER.result(line)
+            logs.append(line)
+            return result
+        EnforcementManager().set_supported_settings(json.loads(resp_list))
         min_timeout_after, result = get_supported_setting(tester, device_id, "screenSaverMinTimeout", result, logs)
-        if not min_timeout_after:
+        if min_timeout_after is None:
             return result
         line = f"[INFO] Value after reboot: {min_timeout_after}"
         LOGGER.info(line)
@@ -2442,7 +2460,7 @@ def run_highContrastText_text_over_images_check(dab_topic, test_name, tester, de
             logs.append(line)
 
         # Capability gate
-        if not require_capabilities(tester, device_id, "ops: system/settings/set", result, logs):
+        if not require_capabilities(tester, device_id, "ops: system/settings/set | settings: highContrastText", result, logs):
             return result
 
         # Step 1: Set a known state by disabling high contrast text first
@@ -2539,7 +2557,7 @@ def run_highContrastText_video_playback_check(dab_topic, test_name, tester, devi
             logs.append(line)
 
         # Capability gate
-        if not require_capabilities(tester, device_id, "ops: system/settings/set", result, logs):
+        if not require_capabilities(tester, device_id, "ops: system/settings/set | settings: highContrastText", result, logs):
             return result
 
         # Step 1: Set a known state by disabling high contrast text first
@@ -8324,7 +8342,11 @@ def run_screensaver_timeout_invalid_value_check(dab_topic, test_name, tester, de
             final_timeout = json.loads(response).get("screenSaverTimeout", "N/A")
             logs.append(f"[INFO] Final screenSaverTimeout is: {final_timeout}")
 
-        if initial_timeout == final_timeout:
+        if initial_timeout == "N/A" or final_timeout == "N/A":
+            result.test_result = "FAILED"
+            line = "[RESULT] FAILED — system/settings/get did not return screenSaverTimeout, so the value could not be compared."
+            LOGGER.result(line); logs.append(line)
+        elif initial_timeout == final_timeout:
             result.test_result = "PASS"
             line = "[RESULT] PASS — Device correctly rejected the invalid value and the setting remained unchanged."
             LOGGER.result(line); logs.append(line)
@@ -10636,13 +10658,13 @@ def run_identifier_for_advertising_persistence_across_restart_check(dab_topic, t
     try:
         # --- Step 2: Read current identifierForAdvertising ---
         LOGGER.result("[STEP] Reading current identifierForAdvertising via system/settings/get.")
-        before_resp = execute_cmd_and_log(tester, device_id, "system/settings/get", {"id": "identifierForAdvertising"}, logs, result)
-        status_before = before_resp.get("status")
+        status_before, before_body = execute_cmd_and_log(tester, device_id, "system/settings/get", "{}", logs, result)
+        before_resp = json.loads(before_body) if status_before == 200 else {}
         if status_before != 200:
             summary = f"system/settings/get for identifierForAdvertising failed with status {status_before}."
             LOGGER.result(f"[RESULT] FAILED – {summary}")
             result.test_result = "FAILED"
-            logs.append(summary_line)
+            logs.append(summary)
             summary_line = f"[SUMMARY] {test_name} — final result: FAILED, test_id={test_id}, device={device_id}"
             LOGGER.result(summary_line)
             logs.append(summary_line)
@@ -10653,7 +10675,7 @@ def run_identifier_for_advertising_persistence_across_restart_check(dab_topic, t
             summary = f"identifierForAdvertising is empty or invalid before restart: {id_before!r}."
             LOGGER.result(f"[RESULT] FAILED – {summary}")
             result.test_result = "FAILED"
-            logs.append(summary_line)
+            logs.append(summary)
             summary_line = f"[SUMMARY] {test_name} — final result: FAILED, test_id={test_id}, device={device_id}"
             LOGGER.result(summary_line)
             logs.append(summary_line)
@@ -10671,7 +10693,7 @@ def run_identifier_for_advertising_persistence_across_restart_check(dab_topic, t
             summary = "Tester chose not to restart the device; aborting identifierForAdvertising persistence test."
             LOGGER.result(f"[RESULT] OPTIONAL_FAILED – {summary}")
             result.test_result = "OPTIONAL_FAILED"
-            logs.append(summary_line)
+            logs.append(summary)
             summary_line = f"[SUMMARY] {test_name} — final result: OPTIONAL_FAILED, test_id={test_id}, device={device_id}"
             LOGGER.result(summary_line)
             logs.append(summary_line)
@@ -10679,20 +10701,19 @@ def run_identifier_for_advertising_persistence_across_restart_check(dab_topic, t
 
         # --- Step 4: Trigger system/restart via DAB ---
         LOGGER.result("[STEP] Triggering system/restart via DAB.")
-        restart_resp = execute_cmd_and_log(tester, device_id, "system/restart", {}, logs, result)
-        status_restart = restart_resp.get("status")
+        status_restart, _ = execute_cmd_and_log(tester, device_id, "system/restart", "{}", logs, result)
         if status_restart != 200:
             summary = f"system/restart returned unexpected status {status_restart}; expected 200."
             LOGGER.result(f"[RESULT] FAILED – {summary}")
             result.test_result = "FAILED"
-            logs.append(summary_line)
+            logs.append(summary)
             summary_line = f"[SUMMARY] {test_name} — final result: FAILED, test_id={test_id}, device={device_id}"
             LOGGER.result(summary_line)
             logs.append(summary_line)
             return result
 
         LOGGER.result("[WAIT] Waiting 60 seconds for the device to restart and DAB to become available again.")
-        countdown(60, LOGGER)
+        countdown("Waiting for the device to restart", 60)
 
         # --- Step 5: Manual confirmation that device is back and ready ---
         LOGGER.result("[STEP] Confirm that the device has fully restarted and is reachable via DAB.")
@@ -10704,7 +10725,7 @@ def run_identifier_for_advertising_persistence_across_restart_check(dab_topic, t
             summary = "Device/DAB not confirmed ready after restart; cannot safely verify identifierForAdvertising."
             LOGGER.result(f"[RESULT] OPTIONAL_FAILED – {summary}")
             result.test_result = "OPTIONAL_FAILED"
-            logs.append(summary_line)
+            logs.append(summary)
             summary_line = f"[SUMMARY] {test_name} — final result: OPTIONAL_FAILED, test_id={test_id}, device={device_id}"
             LOGGER.result(summary_line)
             logs.append(summary_line)
@@ -10712,13 +10733,13 @@ def run_identifier_for_advertising_persistence_across_restart_check(dab_topic, t
 
         # --- Step 6: Read identifierForAdvertising again ---
         LOGGER.result("[STEP] Reading identifierForAdvertising again after restart.")
-        after_resp = execute_cmd_and_log(tester, device_id, "system/settings/get", {"id": "identifierForAdvertising"}, logs, result)
-        status_after = after_resp.get("status")
+        status_after, after_body = execute_cmd_and_log(tester, device_id, "system/settings/get", "{}", logs, result)
+        after_resp = json.loads(after_body) if status_after == 200 else {}
         if status_after != 200:
             summary = f"system/settings/get for identifierForAdvertising after restart failed with status {status_after}."
             LOGGER.result(f"[RESULT] FAILED – {summary}")
             result.test_result = "FAILED"
-            logs.append(summary_line)
+            logs.append(summary)
             summary_line = f"[SUMMARY] {test_name} — final result: FAILED, test_id={test_id}, device={device_id}"
             LOGGER.result(summary_line)
             logs.append(summary_line)
@@ -10729,7 +10750,7 @@ def run_identifier_for_advertising_persistence_across_restart_check(dab_topic, t
             summary = f"identifierForAdvertising is empty or invalid after restart: {id_after!r}."
             LOGGER.result(f"[RESULT] FAILED – {summary}")
             result.test_result = "FAILED"
-            logs.append(summary_line)
+            logs.append(summary)
             summary_line = f"[SUMMARY] {test_name} — final result: FAILED, test_id={test_id}, device={device_id}"
             LOGGER.result(summary_line)
             logs.append(summary_line)
@@ -10742,7 +10763,7 @@ def run_identifier_for_advertising_persistence_across_restart_check(dab_topic, t
             summary = f"identifierForAdvertising changed across restart: before={id_before!r}, after={id_after!r}."
             LOGGER.result(f"[RESULT] FAILED – {summary}")
             result.test_result = "FAILED"
-            logs.append(summary_line)
+            logs.append(summary)
             summary_line = f"[SUMMARY] {test_name} — final result: FAILED, test_id={test_id}, device={device_id}"
             LOGGER.result(summary_line)
             logs.append(summary_line)
@@ -10751,7 +10772,7 @@ def run_identifier_for_advertising_persistence_across_restart_check(dab_topic, t
         summary = "identifierForAdvertising is non-empty and stable across system restart."
         LOGGER.result(f"[SUMMARY] PASS – {summary}")
         result.test_result = "PASS"
-        logs.append(summary_line)
+        logs.append(summary)
         summary_line = f"[SUMMARY] {test_name} — final result: PASS, test_id={test_id}, device={device_id}"
         LOGGER.result(summary_line)
         logs.append(summary_line)
@@ -10761,7 +10782,7 @@ def run_identifier_for_advertising_persistence_across_restart_check(dab_topic, t
         summary = f"Unexpected error during identifierForAdvertising persistence test: {e}"
         LOGGER.result(f"[RESULT] FAILED – {summary}")
         result.test_result = "FAILED"
-        logs.append(summary_line)
+        logs.append(summary)
         summary_line = f"[SUMMARY] {test_name} — final result: FAILED, test_id={test_id}, device={device_id}"
         LOGGER.result(summary_line)
         logs.append(summary_line)
@@ -10801,6 +10822,10 @@ def run_identifier_for_advertising_unsupported_device_ui_absence_check(dab_topic
         logs.append(line)
 
         em = EnforcementManager()
+        if not em.get_supported_settings():
+            status_list, resp_list = execute_cmd_and_log(tester, device_id, "system/settings/list", "{}", logs, result)
+            if status_list == 200:
+                em.set_supported_settings(json.loads(resp_list))
         sup = em.get_supported_settings() or {}
         try:
             sup_dict = sup if isinstance(sup, dict) else json.loads(sup)
@@ -10816,20 +10841,21 @@ def run_identifier_for_advertising_unsupported_device_ui_absence_check(dab_topic
 
         idfa_desc = settings_map.get("identifierForAdvertising")
 
-        if idfa_desc is not None:
-            # identifierForAdvertising is declared in DAB → N/A but treated as PASS.
+        # settings/list reports support as a boolean: true = supported,
+        # false or omitted = not supported (spec 5.3).
+        if idfa_desc is True:
             summary = (
-                "identifierForAdvertising is declared in DAB; this test only targets devices that do NOT support "
-                "advertising identifiers. Treating as PASS (not applicable)."
+                "identifierForAdvertising is supported according to DAB; this test only targets devices that do NOT support "
+                "advertising identifiers. Not applicable."
             )
-            line = f"[RESULT] PASS — {summary}"
+            line = f"[RESULT] OPTIONAL_FAILED — {summary}"
             LOGGER.result(line)
             logs.append(line)
-            result.test_result = "PASS"
+            result.test_result = "OPTIONAL_FAILED"
             return result
 
-        # If we reach here, identifierForAdvertising is not declared in supported settings
-        line = "[INFO] identifierForAdvertising is NOT declared as a supported setting in DAB; treating device as unsupported for IDFA."
+        # If we reach here, identifierForAdvertising is omitted or reported as false in settings/list
+        line = "[INFO] identifierForAdvertising is NOT supported according to system/settings/list; treating device as unsupported for IDFA."
         LOGGER.result(line)
         logs.append(line)
 
@@ -11184,7 +11210,6 @@ def run_identifier_for_advertising_reset_generates_new_value_check(dab_topic, te
             summary = f"Initial system/settings/get for identifierForAdvertising failed with status {status_before}."
             LOGGER.result(f"[RESULT] FAILED – {summary}")
             result.test_result = "FAILED"
-            logs.append(summary_line)
             logs.append(summary)
             return result
 
@@ -11194,7 +11219,6 @@ def run_identifier_for_advertising_reset_generates_new_value_check(dab_topic, te
             summary = "Initial system/settings/get returned invalid JSON; cannot parse identifierForAdvertising."
             LOGGER.result(f"[RESULT] FAILED – {summary}")
             result.test_result = "FAILED"
-            logs.append(summary_line)
             logs.append(summary)
             return result
 
@@ -11207,7 +11231,6 @@ def run_identifier_for_advertising_reset_generates_new_value_check(dab_topic, te
             summary = "identifierForAdvertising is supported but initial value is empty or missing before reset."
             LOGGER.result(f"[RESULT] FAILED – {summary}")
             result.test_result = "FAILED"
-            logs.append(summary_line)
             logs.append(summary)
             return result
 
@@ -11224,14 +11247,13 @@ def run_identifier_for_advertising_reset_generates_new_value_check(dab_topic, te
             summary = "Tester could not perform advertising ID reset; test not executed fully."
             LOGGER.result(f"[RESULT] OPTIONAL_FAILED – {summary}")
             result.test_result = "OPTIONAL_FAILED"
-            logs.append(summary_line)
             logs.append(summary)
             return result
 
         wait_line = "[WAIT] Waiting 5 seconds after manual reset for the new advertising identifier to take effect."
         LOGGER.result(wait_line)
         logs.append(wait_line)
-        countdown(5, LOGGER)
+        countdown("Waiting after the advertising ID reset", 5)
 
         # --- Step 4: Second read of identifierForAdvertising ---
         line = "[STEP] Reading advertising identifier again via system/settings/get after manual reset."
@@ -11246,7 +11268,6 @@ def run_identifier_for_advertising_reset_generates_new_value_check(dab_topic, te
             summary = f"Post-reset system/settings/get for identifierForAdvertising failed with status {status_after}."
             LOGGER.result(f"[RESULT] FAILED – {summary}")
             result.test_result = "FAILED"
-            logs.append(summary_line)
             logs.append(summary)
             return result
 
@@ -11256,7 +11277,6 @@ def run_identifier_for_advertising_reset_generates_new_value_check(dab_topic, te
             summary = "Post-reset system/settings/get returned invalid JSON; cannot parse identifierForAdvertising."
             LOGGER.result(f"[RESULT] FAILED – {summary}")
             result.test_result = "FAILED"
-            logs.append(summary_line)
             logs.append(summary)
             return result
 
@@ -11269,7 +11289,6 @@ def run_identifier_for_advertising_reset_generates_new_value_check(dab_topic, te
             summary = "identifierForAdvertising is empty or missing after reset; expected a non-empty new value."
             LOGGER.result(f"[RESULT] FAILED – {summary}")
             result.test_result = "FAILED"
-            logs.append(summary_line)
             logs.append(summary)
             return result
 
@@ -11280,7 +11299,6 @@ def run_identifier_for_advertising_reset_generates_new_value_check(dab_topic, te
             )
             LOGGER.result(f"[RESULT] FAILED – {summary}")
             result.test_result = "FAILED"
-            logs.append(summary_line)
             logs.append(summary)
             return result
 
@@ -11290,7 +11308,6 @@ def run_identifier_for_advertising_reset_generates_new_value_check(dab_topic, te
         )
         LOGGER.result(f"[RESULT] PASS – {summary}")
         result.test_result = "PASS"
-        logs.append(summary_line)
         logs.append(summary)
         return result
 
@@ -11531,7 +11548,7 @@ def run_contrast_max_value_check(dab_topic, test_name, tester, device_id):
             summary = f"system/settings/list failed with status={status_list}; cannot determine contrast range."
             LOGGER.result(f"[RESULT] FAILED – {summary}")
             result.test_result = "FAILED"
-            logs.append(summary_line)
+            logs.append(summary)
             summary_line = f"[SUMMARY] {test_name} — final result: FAILED, test_id={test_id}, device={device_id}"
             LOGGER.result(summary_line)
             logs.append(summary_line)
@@ -11543,7 +11560,7 @@ def run_contrast_max_value_check(dab_topic, test_name, tester, device_id):
             summary = f"system/settings/list returned invalid JSON: {e}"
             LOGGER.result(f"[RESULT] FAILED – {summary}")
             result.test_result = "FAILED"
-            logs.append(summary_line)
+            logs.append(summary)
             summary_line = f"[SUMMARY] {test_name} — final result: FAILED, test_id={test_id}, device={device_id}"
             LOGGER.result(summary_line)
             logs.append(summary_line)
@@ -11559,7 +11576,7 @@ def run_contrast_max_value_check(dab_topic, test_name, tester, device_id):
             )
             LOGGER.result(f"[RESULT] OPTIONAL_FAILED – {summary}")
             result.test_result = "OPTIONAL_FAILED"
-            logs.append(summary_line)
+            logs.append(summary)
             summary_line = f"[SUMMARY] {test_name} — final result: OPTIONAL_FAILED, test_id={test_id}, device={device_id}"
             LOGGER.result(summary_line)
             logs.append(summary_line)
@@ -11593,7 +11610,7 @@ def run_contrast_max_value_check(dab_topic, test_name, tester, device_id):
             summary = "system/settings/set returned 501; contrast appears read-only or not implemented as a writable setting."
             LOGGER.result(f"[RESULT] OPTIONAL_FAILED – {summary}")
             result.test_result = "OPTIONAL_FAILED"
-            logs.append(summary_line)
+            logs.append(summary)
             summary_line = f"[SUMMARY] {test_name} — final result: OPTIONAL_FAILED, test_id={test_id}, device={device_id}"
             LOGGER.result(summary_line)
             logs.append(summary_line)
@@ -11603,7 +11620,7 @@ def run_contrast_max_value_check(dab_topic, test_name, tester, device_id):
             summary = f"system/settings/set for contrast failed with status={status_set}."
             LOGGER.result(f"[RESULT] FAILED – {summary}")
             result.test_result = "FAILED"
-            logs.append(summary_line)
+            logs.append(summary)
             summary_line = f"[SUMMARY] {test_name} — final result: FAILED, test_id={test_id}, device={device_id}"
             LOGGER.result(summary_line)
             logs.append(summary_line)
@@ -11611,16 +11628,20 @@ def run_contrast_max_value_check(dab_topic, test_name, tester, device_id):
 
         # --- Step 5: Validate via system/settings/get (max supported check) ---
         LOGGER.result("[STEP] Validating via system/settings/get that contrast is set to the advertised maximum.")
-        if not verify_system_setting(tester, device_id, "contrast", max_val, logs, result):
+        status_get1, resp_get1 = execute_cmd_and_log(tester, device_id, "system/settings/get", "{}", logs, result)
+        verified = False
+        if status_get1 == 200:
+            verified, result = verify_system_setting(tester, payload_set, resp_get1, result, logs)
+        if not verified:
             summary = f"system/settings/get did not reflect contrast={max_val} after the set operation; see logs for actual value."
             LOGGER.result(f"[RESULT] FAILED – {summary}")
             result.test_result = "FAILED"
-            logs.append(summary_line)
+            logs.append(summary)
         else:
             summary = "Contrast successfully set to the maximum advertised value and confirmed via system/settings/get."
             LOGGER.result(f"[RESULT] PASS – {summary}")
             result.test_result = "PASS"
-            logs.append(summary_line)
+            logs.append(summary)
 
         # --- Final summary line ----------------------------------------------
         summary_line = f"[SUMMARY] {test_name} — final result: {result.test_result}, test_id={test_id}, device={device_id}"
@@ -11632,7 +11653,7 @@ def run_contrast_max_value_check(dab_topic, test_name, tester, device_id):
         summary = f"Operation '{e.topic}' not supported while running contrast max test; treating as OPTIONAL_FAILED."
         LOGGER.result(f"[RESULT] OPTIONAL_FAILED – {summary}")
         result.test_result = "OPTIONAL_FAILED"
-        logs.append(summary_line)
+        logs.append(summary)
         summary_line = f"[SUMMARY] {test_name} — final result: OPTIONAL_FAILED, test_id={test_id}, device={device_id}"
         LOGGER.result(summary_line)
         logs.append(summary_line)
@@ -11642,7 +11663,7 @@ def run_contrast_max_value_check(dab_topic, test_name, tester, device_id):
         summary = f"Internal error during contrast max value test: {e}"
         LOGGER.result(f"[RESULT] SKIPPED – {summary}")
         result.test_result = "SKIPPED"
-        logs.append(summary_line)
+        logs.append(summary)
         summary_line = f"[SUMMARY] {test_name} — final result: SKIPPED, test_id={test_id}, device={device_id}"
         LOGGER.result(summary_line)
         logs.append(summary_line)
@@ -11834,7 +11855,7 @@ FUNCTIONAL_TEST_CASE = [
     ("applications/launch", "functional", run_launch_app_while_restarting_check, "LaunchAppWhileDeviceRestarting", "2.1", True),
     ("system/network-reset", "functional", run_network_reset_check, "NetworkResetCheck", "2.1", False),
     ("system/factory-reset", "functional", run_factory_reset_and_recovery_check, "Factory Reset and Recovery Check", "2.1", False ),
-    ("system/settings/list", "functional", run_personalized_ads_response_check, "behavior when personalized ads setting is not supported", "2.1", False ),
+    ("system/settings/set", "functional", run_personalized_ads_response_check, "behavior when personalized ads setting is not supported", "2.1", False ),
     ("system/settings/set", "functional", run_personalized_ads_persistence_check, "Personalized Ads Setting Persistence Check", "2.1", False),
     ("applications/uninstall", "functional", run_uninstall_foreground_app_check, "UninstallForegroundAppCheck", "2.1", False),
     ("applications/uninstall", "functional", run_uninstall_system_app_check, "UninstallSystemAppCheck", "2.1", True),
