@@ -4943,7 +4943,7 @@ def run_install_from_url_while_heavy_app_running(dab_topic, test_name, tester, d
     logs = []
     result = TestResult(test_id, device_id, "applications/install", "{}", "UNKNOWN", "", logs)
 
-    # Resolve local artifact → {"appId","url":"/abs/path/file","format":"ext","timeout":int}
+    # Resolve local artifact → {"appId","url":"http://.../file","format":"ext","timeout":seconds}
     try:
         local_payload_dict = ensure_app_available(app_id=app_id)  # path-based install payload
     except Exception as e:
@@ -5291,7 +5291,7 @@ def run_install_from_url_then_launch_simple(dab_topic, test_name, tester, device
         ):
             LOGGER.result(line); logs.append(line)
 
-        # Resolve local artifact (returns {"appId","url","format","timeout"} with absolute path)
+        # Resolve local artifact (returns {"appId","url","format","timeout"} with an http URL)
         try:
             install_payload = ensure_app_available(app_id=app_id)
         except Exception as e:

@@ -5,13 +5,13 @@ App files live in config/apps/ (any extension); use ensure_app_available_anyext(
 Per-app store links live in config/apps/app_urls.json as {appId: url}; a global link lives in config/apps/sample_app.json as {"app_url": url}.
 The global link can also come from env (DAB_APPSTORE_URL, APPSTORE_URL, STORE_URL) and is saved to sample_app.json for next runs.
 Link precedence is: per-app URL → global URL; if missing, you can enable prompting (prompt_if_missing=True) to ask once and save.
-For store installs use build_install_from_app_store_body(appId, ...) → {"appId","url","timeout"} (never puts the URL into "appId").
-For local installs the payload looks like {"appId","url","format","timeout"} from ensure_app_available_anyext.
+For store installs use build_install_from_app_store_body(appId, ...) → {"appId","appStoreId"} (never puts the URL into "appId").
+For local installs the payload looks like {"appId","url","format","timeout"} from ensure_app_available_anyext; timeout is in seconds.
 make_app_id_list() returns the current three allowed IDs; all helpers enforce the allow-list.
 Errors surface as PayloadConfigError with a short hint; logs use the shared suite LOGGER.
 Legacy aliases (ensure_app_available / ensure_apps_available) are kept for compatibility.
 No hard-coded store URLs are used; everything is configured via per-app map, global file, or environment.
-Example: build_install_from_app_store_body("Sample_App") → {"appId":"Sample_App","url":"<configured>","timeout":60000}.
+Example: build_install_from_app_store_body("Sample_App") → {"appId":"Sample_App","appStoreId":"<configured>"}.
 """
 
 from __future__ import annotations
@@ -165,9 +165,13 @@ def _remove_app_files(app_id: str, config_dir: str) -> int:
     return removed
 
 
-def _to_install_payload(app_id: str, file_path: Path, timeout: int = 60000) -> Dict[str, object]:
-    """Build a standard install payload for applications/install (any extension)."""
-    ext = file_path.suffix[1:].lower() if file_path.suffix else "bin"
+def _to_install_payload(app_id: str, file_path: Path, timeout: int = 60) -> Dict[str, object]:
+    """Build a standard install payload for applications/install (any extension).
+
+    timeout is in seconds (spec 5.2, applications/install); format is optional
+    and only sent when the artifact has an extension.
+    """
+    ext = file_path.suffix[1:].lower() if file_path.suffix else ""
     try:
         from util.runtime_api_server import get_runtime_install_url
 
@@ -175,12 +179,14 @@ def _to_install_payload(app_id: str, file_path: Path, timeout: int = 60000) -> D
     except Exception as e:
         raise RuntimeError(f"Could not create runtime install URL for '{app_id}': {e}") from e
 
-    return {
+    payload = {
         "appId": app_id,
         "url": install_url,
-        "format": ext or "bin",
         "timeout": int(timeout),
     }
+    if ext:
+        payload["format"] = ext
+    return payload
 
 # -------------------------------------------------------------------------
 # Core ensure (ANY extension) — now validates allowed IDs
@@ -189,7 +195,7 @@ def _to_install_payload(app_id: str, file_path: Path, timeout: int = 60000) -> D
 def ensure_app_available_anyext(
     app_id: str = "Sample_App",
     config_dir: str = DEFAULT_CONFIG_DIR,
-    timeout: int = 60000,
+    timeout: int = 60,
     prompt_if_missing: bool = False,
 ) -> Dict[str, object]:
     """
@@ -232,7 +238,7 @@ def ensure_app_available_anyext(
 def ensure_apps_available_anyext(
     app_ids: List[str],
     config_dir: str = DEFAULT_CONFIG_DIR,
-    timeout: int = 60000,
+    timeout: int = 60,
     prompt_if_missing: bool = False,
 ) -> List[Dict[str, object]]:
     """Ensure multiple apps (max 3) are available. Returns payloads in given order."""
@@ -342,7 +348,7 @@ def get_sample_apps_payloads(
     count: int = 3,
     base_name: str = "Sample_App",
     config_dir: str = DEFAULT_CONFIG_DIR,
-    timeout: int = 60000,
+    timeout: int = 60,
 ) -> List[Dict[str, object]]:
     app_ids = make_app_id_list()
     return ensure_apps_available_anyext(
@@ -356,7 +362,7 @@ def get_sample_apps_payloads(
 def get_apps_payloads(
     app_ids: List[str],
     config_dir: str = DEFAULT_CONFIG_DIR,
-    timeout: int = 60000,
+    timeout: int = 60,
 ) -> List[Dict[str, object]]:
     return ensure_apps_available_anyext(
         app_ids=[_enforce_allowed(a) for a in app_ids],
@@ -581,13 +587,12 @@ def get_or_prompt_app_url(
 
 def build_install_from_app_store_body(
     app_id: str = "Sample_App",
-    timeout: int = 60000,
     per_app: bool = True,
     prompt_if_missing: bool = False,
 ) -> Dict[str, object]:
     """
-    Build payload for applications/install-from-app-store:
-      {"appId": "<ID>", "url": "<store URL/deeplink>", "timeout": 60000}
+    Build payload for applications/install-from-app-store (spec 5.2):
+      {"appId": "<ID>", "appStoreId": "<store URL/deeplink>"}
 
     - Prompts for missing URLs if prompt_if_missing=True (same UX as asking for app path).
     - Honors the 3 allowed IDs: Sample_App, Sample_App1, Large_App.
@@ -600,7 +605,7 @@ def build_install_from_app_store_body(
         path=APP_URLS_JSON,
         store_config_path=DEFAULT_STORE_JSON,
     )
-    return {"appId": sid, "url": url, "timeout": int(timeout)}
+    return {"appId": sid, "appStoreId": url}
 
 # -------------------------------------------------------------------------
 # Payload builder & error (unchanged)
@@ -740,15 +745,17 @@ def init_interactive_setup(
 
 def build_incorrect_format_body(app_id: str | None = None):
     """
-    Build a flat 'applications/install' NEGATIVE payload (no fileLocation, no file://)
-    using appId='unsupported_format_app' and a .txt artifact.
+    Build an 'applications/install' NEGATIVE payload using
+    appId='unsupported_format_app' and a .txt artifact. The artifact is
+    served over HTTP like any other app, because local file paths are
+    rejected by the spec regardless of the format.
 
     Produces:
     {
       "appId": "unsupported_format_app",
-      "url": "<absolute>/config/apps/unsupported_format_app.txt",
+      "url": "http://<host>:<port>/runtime/install/files/unsupported_format_app.txt",
       "format": "txt",
-      "timeout": 60000
+      "timeout": 60
     }
     """
     # Always use the dedicated negative-test app id
@@ -774,10 +781,11 @@ def build_incorrect_format_body(app_id: str | None = None):
                 f.write("dummy text file for negative install format test\n")
             txt_path = fallback
 
-    # Flat payload (as required): NO fileLocation, NO file://
+    from util.runtime_api_server import get_runtime_install_url
+
     return {
         "appId": resolved_app_id,
-        "url": txt_path,
+        "url": get_runtime_install_url(resolved_app_id, config_dir=os.path.dirname(txt_path)),
         "format": "txt",
-        "timeout": 60000,
+        "timeout": 60,
     }
