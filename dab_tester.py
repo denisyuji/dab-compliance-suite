@@ -21,6 +21,14 @@ from packaging.version import Version, InvalidVersion
 
 DAB_VERSION = "2.0" # default dab version is 2.0, this global value will be used in system/settings/... operations.
 
+# Error codes a negative test accepts besides 400/404, where the spec defines
+# an operation-specific code (DAB 2.1, section 5.2).
+NEGATIVE_EXTRA_ERROR_CODES = {
+    "applications/install": {408},
+    "applications/uninstall": {403},
+    "applications/install-from-app-store": {401},
+}
+
 # Raised when preflight (discovery/health) decides we should stop the run.
 class PreflightTermination(Exception):
     pass
@@ -680,7 +688,7 @@ class DabTester:
                     error_code = self.dab_client.last_error_code()
                     error_msg = self.dab_client.response()
 
-                    if is_negative and error_code in (400, 404):
+                    if is_negative and error_code in {400, 404} | NEGATIVE_EXTRA_ERROR_CODES.get(dab_request_topic, set()):
                         test_result.test_result = "PASS"
                         log(test_result, f"\033[1;33m[ NEGATIVE TEST PASSED - Expected Error Code {error_code} ]\033[0m")
                     elif error_code == 501:
