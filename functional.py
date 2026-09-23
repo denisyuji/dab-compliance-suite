@@ -654,7 +654,8 @@ def run_app_foreground_check(dab_topic, test_name, tester, device_id):
 # === Test 2: App in BACKGROUND Validate app moves to BACKGROUND after pressing Home ===
 def run_app_background_check(dab_topic, test_name, tester, device_id):
     """
-    Checks if an app correctly moves to the background after the Home key is pressed.
+    Checks if an app correctly moves to the background with applications/exit
+    {"background": true}, the operation the spec defines for it (5.2).
     """
     test_id = to_test_id(f"{dab_topic}/{test_name}")
     app_id = config.apps.get("youtube", "YouTube")
@@ -666,16 +667,16 @@ def run_app_background_check(dab_topic, test_name, tester, device_id):
         # Always-on header + description (printed and stored)
         for line in (
             f"[TEST] App Background Check — {test_name} (test_id={test_id}, device={device_id}, appId={app_id})",
-            "[DESC] Goal: launch an app, press HOME, and confirm it reaches BACKGROUND state.",
+            "[DESC] Goal: launch an app, call applications/exit {background:true}, and confirm it reaches BACKGROUND state.",
             "[DESC] Preconditions: device powered on, DAB reachable, stable network.",
-            "[DESC] Required operations: applications/launch, input/key-press, applications/get-state.",
+            "[DESC] Required operations: applications/launch, applications/exit, applications/get-state.",
             "[DESC] Pass criteria: final state == 'BACKGROUND'. Any other state → FAILED.",
         ):
             LOGGER.result(line)
             logs.append(line)
 
         # Capability gate for all required operations
-        required_ops = "ops: applications/launch, input/key-press, applications/get-state"
+        required_ops = "ops: applications/launch, applications/exit, applications/get-state"
         if not require_capabilities(tester, device_id, required_ops, result, logs):
             return result # 'require_capabilities' function already set the result and logged
 
@@ -694,16 +695,23 @@ def run_app_background_check(dab_topic, test_name, tester, device_id):
         logs.append(line)
         time.sleep(APP_LAUNCH_WAIT)
 
-        # Step 2 — Press the HOME key to send the app to the background
-        payload_home = json.dumps({"keyCode": "KEY_HOME"})
+        # Step 2 — Send the app to the background with applications/exit
+        payload_bg = json.dumps({"appId": app_id, "background": True})
         line = (
-            f"[STEP] Pressing HOME key via input/key-press with payload: {payload_home}"
+            f"[STEP] Moving app to background via applications/exit with payload: {payload_bg}"
         )
         LOGGER.result(line)
         logs.append(line)
-        execute_cmd_and_log(
-            tester, device_id, "input/key-press", payload_home, logs, result
+        _, response_bg = execute_cmd_and_log(
+            tester, device_id, "applications/exit", payload_bg, logs, result
         )
+        try:
+            exit_state = json.loads(response_bg).get("state")
+        except Exception:
+            exit_state = None
+        line = f"[INFO] applications/exit response state='{exit_state}'."
+        LOGGER.info(line)
+        logs.append(line)
 
         # Wait for the app to transition to the background
         line = f"[WAIT] Allowing {APP_EXIT_WAIT}s for the app to move to the background."
@@ -737,14 +745,14 @@ def run_app_background_check(dab_topic, test_name, tester, device_id):
             LOGGER.error(line)
             logs.append(line)
 
-        if state == "BACKGROUND":
+        if state == "BACKGROUND" and exit_state == "BACKGROUND":
             result.test_result = "PASS"
-            line = f"[RESULT] PASS — app reached BACKGROUND after HOME key press (appId={app_id}, device={device_id}, test_id={test_id})"
+            line = f"[RESULT] PASS — app reached BACKGROUND after applications/exit {{background:true}} (appId={app_id}, device={device_id}, test_id={test_id})"
             LOGGER.result(line)
             logs.append(line)
         else:
             result.test_result = "FAILED"
-            line = f"[RESULT] FAILED — expected 'BACKGROUND' but observed '{state}' (appId={app_id}, device={device_id}, test_id={test_id})"
+            line = f"[RESULT] FAILED — expected 'BACKGROUND' but observed '{state}' (exit response state '{exit_state}') (appId={app_id}, device={device_id}, test_id={test_id})"
             LOGGER.result(line)
             logs.append(line)
 
@@ -900,9 +908,9 @@ def run_launch_without_content_id(dab_topic, test_name, tester, device_id):
         for line in (
             f"[TEST] Launch Without Content ID (Negative) — {test_name} (test_id={test_id}, device={device_id}, appId={app_id})",
             "[DESC] Goal: Attempt to launch an app with content without providing a contentId.",
-            "[DESC] This is a negative test and is expected to fail with a non-200 status.",
+            "[DESC] This is a negative test; a malformed request must be answered with 400.",
             "[DESC] Required operations: applications/launch-with-content.",
-            "[DESC] Pass criteria: DAB status != 200. A 200 status is a FAILURE.",
+            "[DESC] Pass criteria: DAB status 400. Any other status is a FAILURE.",
         ):
             LOGGER.result(line)
             logs.append(line)
@@ -925,14 +933,19 @@ def run_launch_without_content_id(dab_topic, test_name, tester, device_id):
         LOGGER.info(line)
         logs.append(line)
         
-        if status != 200:
+        if status == 400:
             result.test_result = "PASS"
-            line = f"[RESULT] PASS — Device correctly returned an error status ({status}) as expected."
+            line = f"[RESULT] PASS — Device correctly returned 400 for the missing contentId."
+            LOGGER.result(line)
+            logs.append(line)
+        elif status == 501:
+            result.test_result = "OPTIONAL_FAILED"
+            line = f"[RESULT] OPTIONAL_FAILED — applications/launch-with-content returned 501."
             LOGGER.result(line)
             logs.append(line)
         else:
             result.test_result = "FAILED"
-            line = f"[RESULT] FAILED — Device returned status 200, but an error was expected."
+            line = f"[RESULT] FAILED — Device returned status {status}, but 400 was expected for a malformed request."
             LOGGER.result(line)
             logs.append(line)
 
@@ -973,26 +986,32 @@ def run_exit_after_video_check(dab_topic, test_name, tester, device_id):
         for line in (
             f"[TEST] Exit After Video Playback — {test_name} (test_id={test_id}, device={device_id}, appId={app_id})",
             f"[DESC] Goal: Launch an app with video content, exit it, and confirm it reaches the STOPPED state.",
-            "[DESC] Required operations: applications/launch, applications/exit, applications/get-state.",
-            "[DESC] Pass criteria: final state == 'STOPPED'.",
+            "[DESC] Required operations: applications/launch-with-content, applications/exit, applications/get-state.",
+            "[DESC] Pass criteria: exit response state and final state == 'STOPPED'.",
         ):
             LOGGER.result(line)
             logs.append(line)
 
         # Capability gate
-        required_ops = "ops: applications/launch, applications/exit, applications/get-state"
+        required_ops = "ops: applications/launch-with-content, applications/exit, applications/get-state"
         if not require_capabilities(tester, device_id, required_ops, result, logs):
             return result
 
-        # Step 1: Launch the app with video content
+        # Step 1: Launch the app with video content (deep link, spec 5.2)
         launch_payload = json.dumps({
             "appId": app_id,
-            "parameters": [f"v={video_id}"]
+            "contentId": video_id
         })
         line = f"[STEP] Launching video content with payload: {launch_payload}"
         LOGGER.result(line)
         logs.append(line)
-        execute_cmd_and_log(tester, device_id, "applications/launch", launch_payload, logs, result)
+        launch_status, _ = execute_cmd_and_log(tester, device_id, "applications/launch-with-content", launch_payload, logs, result)
+        if launch_status != 200:
+            result.test_result = "FAILED"
+            line = f"[RESULT] FAILED — applications/launch-with-content returned {launch_status} (expected 200)."
+            LOGGER.result(line)
+            logs.append(line)
+            return result
         
         wait_time = APP_LAUNCH_WAIT + CONTENT_LOAD_WAIT
         line = f"[WAIT] Allowing {wait_time}s for video to load and play."
@@ -1005,7 +1024,14 @@ def run_exit_after_video_check(dab_topic, test_name, tester, device_id):
         line = f"[STEP] Exiting application with payload: {exit_payload}"
         LOGGER.result(line)
         logs.append(line)
-        execute_cmd_and_log(tester, device_id, "applications/exit", exit_payload, logs, result)
+        _, exit_response = execute_cmd_and_log(tester, device_id, "applications/exit", exit_payload, logs, result)
+        try:
+            exit_state = json.loads(exit_response).get("state")
+        except Exception:
+            exit_state = None
+        line = f"[INFO] applications/exit response state='{exit_state}'."
+        LOGGER.info(line)
+        logs.append(line)
         
         line = f"[WAIT] Allowing {APP_EXIT_WAIT}s for the app to terminate."
         LOGGER.info(line)
@@ -1035,14 +1061,14 @@ def run_exit_after_video_check(dab_topic, test_name, tester, device_id):
             LOGGER.error(line)
             logs.append(line)
 
-        if state == "STOPPED":
+        if state == "STOPPED" and exit_state == "STOPPED":
             result.test_result = "PASS"
             line = f"[RESULT] PASS — App correctly stopped after playing video."
             LOGGER.result(line)
             logs.append(line)
         else:
             result.test_result = "FAILED"
-            line = f"[RESULT] FAILED — Expected 'STOPPED' but observed '{state}'."
+            line = f"[RESULT] FAILED — Expected 'STOPPED' but observed '{state}' (exit response state '{exit_state}')."
             LOGGER.result(line)
             logs.append(line)
 
@@ -3831,8 +3857,9 @@ def run_uninstall_system_app_check(dab_topic, test_name, tester, device_id):
     Validates that a critical system application (Settings) cannot be uninstalled.
     """
     test_id = to_test_id(f"{dab_topic}/{test_name}")
-    # Hardcode the appId to 'settings', which the DAB bridge should resolve to a package name.
-    app_id = "settings"
+    # 'settings' is not in the DAB app registry; set config.apps["settings"] to the
+    # device's system app ID when it differs.
+    app_id = config.apps.get("settings", "settings")
     logs = []
     payload_app = json.dumps({"appId": app_id})
     result = TestResult(test_id, device_id, "applications/uninstall", payload_app, "UNKNOWN", "", logs)
@@ -3844,7 +3871,7 @@ def run_uninstall_system_app_check(dab_topic, test_name, tester, device_id):
             f"[TEST] Uninstall System App Check — {test_name} (test_id={test_id}, device={device_id}, appId={app_id})",
             "[DESC] Goal: Verify that a critical system app (Settings) cannot be uninstalled.",
             "[DESC] Required ops: applications/uninstall.",
-            "[DESC] Pass criteria: The 'uninstall' command must return status 403 (Forbidden).",
+            "[DESC] Pass criteria: The 'uninstall' command must fail with status 403 (spec 5.2: uninstall failure).",
         ):
             LOGGER.result(line)
             logs.append(line)
@@ -3867,6 +3894,11 @@ def run_uninstall_system_app_check(dab_topic, test_name, tester, device_id):
         elif uninstall_status == 200:
             result.test_result = "FAILED"
             line = f"[RESULT] FAILED — Device incorrectly allowed uninstalling a system app (status 200). This is a security risk."
+        elif uninstall_status in (400, 404, 501):
+            # The device does not know this appId or the operation; nothing was verified.
+            result.test_result = "OPTIONAL_FAILED"
+            line = (f"[RESULT] OPTIONAL_FAILED — Device returned {uninstall_status} for appId '{app_id}'. "
+                    f"Set config.apps['settings'] to the device's system app ID to run this check.")
         else:
             result.test_result = "FAILED"
             line = (f"[RESULT] FAILED — Device returned an unexpected status '{uninstall_status}'. Expected 403. "
@@ -4157,6 +4189,11 @@ def run_install_from_app_store_check(dab_topic, test_name, tester, device_id):
         msg = f"[INFO] install-from-app-store transport_rc={rc_install}, dab_status={install_status}"
         LOGGER.info(msg); logs.append(msg)
 
+        if install_status == 401:
+            result.test_result = "OPTIONAL_FAILED"
+            msg = "[RESULT] OPTIONAL_FAILED — install-from-app-store returned 401: the app store needs a user login (spec 5.2); log in and rerun."
+            LOGGER.result(msg); logs.append(msg)
+            return result
         if install_status != 200:
             result.test_result = "FAILED"
             msg = f"[RESULT] FAILED — install-from-app-store returned {install_status} (expected 200)"
@@ -4248,6 +4285,11 @@ def run_install_youtube_kids_from_store(dab_topic, test_name, tester, device_id)
         msg = f"[INFO] install-from-app-store transport_rc={rc_install}, dab_status={install_status}"
         LOGGER.info(msg); logs.append(msg)
 
+        if install_status == 401:
+            result.test_result = "OPTIONAL_FAILED"
+            msg = "[RESULT] OPTIONAL_FAILED — install-from-app-store returned 401: the app store needs a user login (spec 5.2); log in and rerun."
+            LOGGER.result(msg); logs.append(msg)
+            return result
         if install_status != 200:
             result.test_result = "FAILED"
             msg = f"[RESULT] FAILED — install-from-app-store returned {install_status} (expected 200)"
@@ -4327,7 +4369,7 @@ def run_install_youtube_kids_from_store(dab_topic, test_name, tester, device_id)
 def run_uninstall_after_standby_check(dab_topic, test_name, tester, device_id):
     """
     Positive: Uninstall a pre-installed removable app when device was in standby (woken for operation).
-    Flow: (best-effort) wake via input/key-press -> applications/uninstall -> short wait -> (best-effort) applications/list
+    Flow: system/power-mode/set Standby -> Active -> applications/uninstall -> short wait -> (best-effort) applications/list
     Pass if uninstall returns 200 and (if list is available) the app no longer appears.
     """
     test_id = to_test_id(f"{dab_topic}/{test_name}")
@@ -4343,13 +4385,13 @@ def run_uninstall_after_standby_check(dab_topic, test_name, tester, device_id):
         # Header
         msg = f"[TEST] Uninstall After Standby — {test_name} (test_id={test_id}, device={device_id}, appId={app_id})"
         LOGGER.result(msg); logs.append(msg)
-        msg = "[DESC] Flow: wake (best-effort) → uninstall → short wait → (best-effort) apps list check; PASS if uninstall == 200."
+        msg = "[DESC] Flow: power-mode Standby → Active → uninstall → short wait → (best-effort) apps list check; PASS if uninstall == 200."
         LOGGER.result(msg); logs.append(msg)
         msg = "[DESC] Data deletion must be verified manually/OEM; DAB lacks per-app storage APIs."
         LOGGER.result(msg); logs.append(msg)
 
         # Required capability gate (unsupported → OPTIONAL_FAILED handled by require_capabilities)
-        if not require_capabilities(tester, device_id, "ops: applications/uninstall", result, logs):
+        if not require_capabilities(tester, device_id, "ops: applications/uninstall, system/power-mode/set", result, logs):
             msg = (f"[SUMMARY] outcome=OPTIONAL_FAILED, uninstall_status=N/A, "
                    f"test_id={test_id}, device={device_id}, appId={app_id}")
             LOGGER.result(msg); logs.append(msg)
@@ -4358,21 +4400,22 @@ def run_uninstall_after_standby_check(dab_topic, test_name, tester, device_id):
         msg = "[INFO] Capability gate passed."
         LOGGER.info(msg); logs.append(msg)
 
-        # 0) Best-effort wake from standby (optional)
-        try:
-            msg = f"[STEP] input/key-press {{\"keyCode\": \"KEY_POWER\"}}  # best-effort wake"
+        # 0) Put the device in Standby and wake it with system/power-mode/set (spec 5.3)
+        for mode in ("Standby", "Active"):
+            payload_mode = json.dumps({"powerMode": mode})
+            msg = f"[STEP] system/power-mode/set {payload_mode}"
             LOGGER.result(msg); logs.append(msg)
-            rc_wake, resp_wake = execute_cmd_and_log(
-                tester, device_id, "input/key-press", {"keyCode": "KEY_POWER"}, logs, result
+            status_mode, _ = execute_cmd_and_log(
+                tester, device_id, "system/power-mode/set", payload_mode, logs, result
             )
-            msg = f"[INFO] input/key-press transport_rc={rc_wake}, response={resp_wake}"
-            LOGGER.info(msg); logs.append(msg)
-            msg = f"[WAIT] {WAKE_WAIT}s after wake attempt"
+            if status_mode != 200:
+                result.test_result = "FAILED"
+                msg = f"[RESULT] FAILED — system/power-mode/set {mode} returned {status_mode} (expected 200)"
+                LOGGER.result(msg); logs.append(msg)
+                return result
+            msg = f"[WAIT] {WAKE_WAIT}s after power mode {mode}"
             LOGGER.info(msg); logs.append(msg)
             time.sleep(WAKE_WAIT)
-        except Exception:
-            msg = "[INFO] Skipping wake attempt (input/key-press unavailable or failed)"
-            LOGGER.info(msg); logs.append(msg)
 
         # 1) Uninstall
         msg = f"[STEP] applications/uninstall {payload_app}"
@@ -4455,8 +4498,8 @@ def run_uninstall_after_standby_check(dab_topic, test_name, tester, device_id):
 
 def run_install_bg_uninstall_sample_app(dab_topic, test_name, tester, device_id):
     """
-    Flow: applications/install (Sample_App from local path) -> launch -> HOME (background) -> uninstall
-    Pass if install == 200 and uninstall == 200. No launcher fallback; only KEY_HOME.
+    Flow: applications/install (Sample_App over HTTP) -> launch -> exit {background:true} -> uninstall
+    Pass if install == 200, the app reaches BACKGROUND and uninstall == 200.
     """
     test_id = to_test_id(f"{dab_topic}/{test_name}")
     app_id  = config.apps.get("sample_app", "Sample_App")
@@ -4471,8 +4514,8 @@ def run_install_bg_uninstall_sample_app(dab_topic, test_name, tester, device_id)
 
     try:
         # Header
-        LOGGER.result(f"[TEST] Install → HOME → Uninstall — {test_name} (test_id={test_id}, device={device_id}, appId={app_id})"); logs.append(
-            f"[TEST] Install → HOME → Uninstall — {test_name} (test_id={test_id}, device={device_id}, appId={app_id})")
+        LOGGER.result(f"[TEST] Install → Background → Uninstall — {test_name} (test_id={test_id}, device={device_id}, appId={app_id})"); logs.append(
+            f"[TEST] Install → Background → Uninstall — {test_name} (test_id={test_id}, device={device_id}, appId={app_id})")
 
         # Resolve local install payload (absolute path; any extension)
         try:
@@ -4484,9 +4527,9 @@ def run_install_bg_uninstall_sample_app(dab_topic, test_name, tester, device_id)
                 f"[SUMMARY] outcome=SKIPPED, test_id={test_id}, device={device_id}, appId={app_id}")
             return result
 
-        # Capability gate (include input/key-press explicitly)
+        # Capability gate
         if not require_capabilities(tester, device_id,
-                    "ops: applications/install, applications/launch, input/key-press, applications/uninstall",
+                    "ops: applications/install, applications/launch, applications/exit, applications/get-state, applications/uninstall",
                     result, logs):
             LOGGER.result(f"[SUMMARY] outcome=OPTIONAL_FAILED, test_id={test_id}, device={device_id}, appId={app_id}")
             return result
@@ -4508,11 +4551,21 @@ def run_install_bg_uninstall_sample_app(dab_topic, test_name, tester, device_id)
         rc_l, resp_l = execute_cmd_and_log(tester, device_id, "applications/launch", payload_app_json, logs, result)
         time.sleep(APP_LAUNCH_WAIT)
 
-        # 3) Background with HOME (no fallback)
-        payload_home = json.dumps({"keyCode": "KEY_HOME"})
-        LOGGER.result(f'[STEP] input/key-press {payload_home}  # background app'); logs.append(f'[STEP] input/key-press {payload_home}')
-        rc_home, resp_home = execute_cmd_and_log(tester, device_id, "input/key-press", payload_home, logs, result)
+        # 3) Background with applications/exit {background:true} (spec 5.2)
+        payload_bg = json.dumps({"appId": app_id, "background": True})
+        LOGGER.result(f'[STEP] applications/exit {payload_bg}  # background app'); logs.append(f'[STEP] applications/exit {payload_bg}')
+        execute_cmd_and_log(tester, device_id, "applications/exit", payload_bg, logs, result)
         time.sleep(BG_WAIT)
+        _, resp_state = execute_cmd_and_log(tester, device_id, "applications/get-state", payload_app_json, logs, result)
+        try:
+            bg_state = json.loads(resp_state).get("state")
+        except Exception:
+            bg_state = None
+        if bg_state != "BACKGROUND":
+            result.test_result = "FAILED"
+            LOGGER.result(f"[RESULT] FAILED — app state is '{bg_state}' before uninstall (expected BACKGROUND)")
+            logs.append(f"[RESULT] FAILED — app state is '{bg_state}' before uninstall (expected BACKGROUND)")
+            return result
 
         # 4) Uninstall
         LOGGER.result(f"[STEP] applications/uninstall {payload_app_json}"); logs.append(f"[STEP] applications/uninstall {payload_app_json}")
@@ -4521,7 +4574,7 @@ def run_install_bg_uninstall_sample_app(dab_topic, test_name, tester, device_id)
 
         if st_u == 200:
             result.test_result = "PASS"
-            LOGGER.result("[RESULT] PASS — install 200, HOME ok, uninstall 200")
+            LOGGER.result("[RESULT] PASS — install 200, app in BACKGROUND, uninstall 200")
         else:
             result.test_result = "FAILED"
             LOGGER.result(f"[RESULT] FAILED — uninstall returned {st_u} (expected 200)")
@@ -4862,7 +4915,8 @@ def run_install_large_apk_from_url_then_launch(dab_topic, test_name, tester, dev
         install_body = ensure_app_available(app_id=app_id)  # {"appId","url","format","timeout"}
     except Exception as e_path:
         try:
-            url = ensure_app_available_anyext(app_id)               # per-app or global URL from config
+            from util.config_loader import get_app_url_or_fail
+            url = get_app_url_or_fail(app_id)                       # per-app or global URL from config
             install_body = {"appId": app_id, "url": url}
         except Exception as e_url:
             result.test_result = "SKIPPED"
@@ -6230,6 +6284,11 @@ def run_install_region_specific_app_check(dab_topic, test_name, tester, device_i
         rc, response = execute_cmd_and_log(tester, device_id, "applications/install-from-app-store", payload, logs, result)
         install_status = dab_status_from(response, rc)
         
+        if install_status == 401:
+            result.test_result = "OPTIONAL_FAILED"
+            line = "[RESULT] OPTIONAL_FAILED — install-from-app-store returned 401: the app store needs a user login (spec 5.2); log in and rerun."
+            LOGGER.result(line); logs.append(line)
+            return result
         if install_status != 200:
             result.test_result = "FAILED"
             line = f"[RESULT] FAILED — App install failed with status {install_status}."
@@ -6340,6 +6399,11 @@ def run_update_installed_app_check(dab_topic, test_name, tester, device_id):
         rc, response = execute_cmd_and_log(tester, device_id, "applications/install-from-app-store", payload, logs, result)
         update_status = dab_status_from(response, rc)
         
+        if update_status == 401:
+            result.test_result = "OPTIONAL_FAILED"
+            line = "[RESULT] OPTIONAL_FAILED — install-from-app-store returned 401: the app store needs a user login (spec 5.2); log in and rerun."
+            LOGGER.result(line); logs.append(line)
+            return result
         if update_status != 200:
             result.test_result = "FAILED"
             line = f"[RESULT] FAILED — App update command failed with status {update_status}."
@@ -11773,7 +11837,7 @@ FUNCTIONAL_TEST_CASE = [
     ("system/settings/list", "functional", run_personalized_ads_response_check, "behavior when personalized ads setting is not supported", "2.1", False ),
     ("system/settings/set", "functional", run_personalized_ads_persistence_check, "Personalized Ads Setting Persistence Check", "2.1", False),
     ("applications/uninstall", "functional", run_uninstall_foreground_app_check, "UninstallForegroundAppCheck", "2.1", False),
-    ("applications/uninstall", "functional", run_uninstall_system_app_check, "UninstallSystemAppCheck", "2.1", False),
+    ("applications/uninstall", "functional", run_uninstall_system_app_check, "UninstallSystemAppCheck", "2.1", True),
     ("applications/clear-data", "functional", run_clear_data_foreground_app_check, "ClearDataForegroundAppCheck", "2.1", False),
     ("applications/clear-data", "functional", run_clear_data_system_app_check, "ClearDataSystemAppCheck", "2.1", False),
     ("applications/clear-data", "functional", run_clear_data_user_installed_app_foreground, "ClearDataUserInstalledAppForeground", "2.1", False),
@@ -11851,7 +11915,7 @@ FUNCTIONAL_TEST_CASE = [
     ("system/power-mode/set", "functional", functionals.power_mode.run_system_power_mode_active_to_standby_check, "System_PowerMode Active_To_Standby Check", "2.1", False),
     ("system/power-mode/set", "functional", functionals.power_mode.run_system_power_mode_set_missing_mode_param_check, "System_PowerMode_Set Missing_Mode_Param Check", "2.1", True),
     ("voice/send-text", "functional", functionals.send_text.run_voice_send_text_invalid_payload_check, "VoiceSendTextInvalidPayload", "2.0", True),
-    ("applications/exit", "functional", functionals.applications_exit.run_exit_app_while_in_background_check, "ExitAppWhileInBackground", "2.0", True),
+    ("applications/exit", "functional", functionals.applications_exit.run_exit_app_while_in_background_check, "ExitAppWhileInBackground", "2.0", False),
     ("applications/exit", "functional", functionals.applications_exit.run_exit_app_without_parameters_check, "ExitAppWithoutParameters", "2.0", True),
 
 ]

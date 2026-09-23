@@ -8,14 +8,15 @@ import time
 
 def run_exit_app_while_in_background_check(dab_topic, test_name, tester, device_id):
     """
-    DAB 2.0 – applications/exit while app is in BACKGROUND (negative / graceful-handling)
+    DAB 2.0 – applications/exit while app is in BACKGROUND
+
+    Without the background flag, exit must stop the application from any
+    state (spec 5.2, applications/exit).
 
     PASS if:
-      - The request returns promptly (no timeout/crash) AND
-      - Either:
-          a) exit succeeds (200) and app becomes STOPPED, OR
-          b) exit is rejected gracefully with a client error (prefer 400 per suite rule),
-             and the device remains stable (no hang).
+      - applications/exit {"background": true} moves the app to BACKGROUND, AND
+      - applications/exit {"appId"} then returns 200 with state STOPPED, AND
+      - applications/get-state reports STOPPED.
     OPTIONAL_FAILED if operations not supported (501 / capability gate).
     """
     test_id = to_test_id(f"{dab_topic}/{test_name}")
@@ -35,14 +36,14 @@ def run_exit_app_while_in_background_check(dab_topic, test_name, tester, device_
 
     try:
         helpers.log_line(logs, "TEST", f"{test_name} (id={test_id}, device={device_id}, appId={app_id})", result=result)
-        helpers.log_line(logs, "DESC", "Launch YouTube, move to BACKGROUND (HOME), then call applications/exit while in BACKGROUND.", result=result)
-        helpers.log_line(logs, "DESC", "Goal: validate graceful handling (no crash/timeout). Accept success (200) or clean rejection (prefer 400).", result=result)
+        helpers.log_line(logs, "DESC", "Launch YouTube, move it to BACKGROUND with applications/exit {background:true}, then call applications/exit.", result=result)
+        helpers.log_line(logs, "DESC", "Goal: exit without the background flag must stop the app from BACKGROUND (200, state STOPPED).", result=result)
 
         if not app_id:
             helpers.finish(result, logs, "SKIPPED", "config.apps['youtube'] not set.")
             return result
 
-        cap_spec = "ops: applications/launch, applications/get-state, applications/exit, input/key-press | keys: KEY_HOME"
+        cap_spec = "ops: applications/launch, applications/get-state, applications/exit"
         if not helpers.require_capabilities(tester, device_id, cap_spec, result, logs):
             return result
 
@@ -62,23 +63,23 @@ def run_exit_app_while_in_background_check(dab_topic, test_name, tester, device_
         helpers.log_line(logs, "WAIT", f"Waiting {LAUNCH_WAIT}s after launch.", result=result)
         time.sleep(LAUNCH_WAIT)
 
-        # 2) Send HOME to background the app
-        helpers.log_line(logs, "STEP", "Sending KEY_HOME to move app to background.", result=result)
+        # 2) Move the app to BACKGROUND the way the spec defines it
+        helpers.log_line(logs, "STEP", "Sending applications/exit {background:true} to move app to BACKGROUND.", result=result)
         status_home, _ = helpers.execute_cmd_and_log(
-            tester, device_id, "input/key-press", json.dumps({"keyCode": "KEY_HOME"}), logs=logs, result=result
+            tester, device_id, "applications/exit", json.dumps({"appId": app_id, "background": True}), logs=logs, result=result
         )
         if status_home == 501:
-            helpers.finish(result, logs, "OPTIONAL_FAILED", "input/key-press returned 501.")
+            helpers.finish(result, logs, "OPTIONAL_FAILED", "applications/exit {background:true} returned 501.")
             return result
         if status_home != 200:
-            helpers.finish(result, logs, "FAILED", f"input/key-press(KEY_HOME) returned {status_home} (expected 200).")
+            helpers.finish(result, logs, "FAILED", f"applications/exit {{background:true}} returned {status_home} (expected 200).")
             return result
 
-        helpers.log_line(logs, "WAIT", f"Waiting {BG_WAIT}s after HOME.", result=result)
+        helpers.log_line(logs, "WAIT", f"Waiting {BG_WAIT}s after backgrounding.", result=result)
         time.sleep(BG_WAIT)
 
-        # 3) Confirm BACKGROUND (or at least not FOREGROUND) via get-state
-        helpers.log_line(logs, "STEP", "Reading app state via applications/get-state (expect BACKGROUND or not FOREGROUND).", result=result)
+        # 3) Confirm BACKGROUND via get-state
+        helpers.log_line(logs, "STEP", "Reading app state via applications/get-state (expect BACKGROUND).", result=result)
         status_state_bg, body_state_bg = helpers.execute_cmd_and_log(
             tester, device_id, "applications/get-state", json.dumps({"appId": app_id}), logs=logs, result=result
         )
@@ -96,15 +97,14 @@ def run_exit_app_while_in_background_check(dab_topic, test_name, tester, device_
         except Exception:
             state_bg = None
 
-        helpers.log_line(logs, "INFO", f"state after HOME={state_bg}", result=result)
+        helpers.log_line(logs, "INFO", f"state after exit {{background:true}}={state_bg}", result=result)
+        if state_bg != "BACKGROUND":
+            helpers.finish(result, logs, "FAILED", f"App state is '{state_bg}' after exit {{background:true}} (expected BACKGROUND).")
+            return result
 
-        # If device does not report BACKGROUND reliably, still proceed, but note it.
-        if state_bg == "FOREGROUND":
-            helpers.log_line(logs, "INFO", "App still reports FOREGROUND after HOME; proceeding to exit to validate graceful handling.", result=result)
-
-        # 4) Exit while app is background (or not foreground)
-        helpers.log_line(logs, "STEP", "Sending applications/exit while app is expected BACKGROUND.", result=result)
-        status_exit, _ = helpers.execute_cmd_and_log(
+        # 4) Exit while app is background
+        helpers.log_line(logs, "STEP", "Sending applications/exit while app is BACKGROUND.", result=result)
+        status_exit, body_exit = helpers.execute_cmd_and_log(
             tester, device_id, "applications/exit", json.dumps({"appId": app_id}), logs=logs, result=result
         )
 
@@ -136,19 +136,22 @@ def run_exit_app_while_in_background_check(dab_topic, test_name, tester, device_
 
         helpers.log_line(logs, "INFO", f"state after exit={state_after}", result=result)
 
-        # Outcome logic (graceful handling)
-        if status_exit == 200:
-            # Prefer STOPPED, but allow BACKGROUND->STOPPED propagation delays; treat not-stopped as FAILED to keep it meaningful.
-            if state_after == "STOPPED":
-                helpers.finish(result, logs, "PASS", "Exit succeeded (200) while app was backgrounded and state is STOPPED.")
-            else:
-                helpers.finish(result, logs, "FAILED", f"Exit returned 200 but state is '{state_after}' (expected STOPPED).")
-        elif status_exit == 400:
-            # Graceful rejection is acceptable for this negative scenario.
-            helpers.finish(result, logs, "PASS", "Exit was rejected gracefully with 400 while app was backgrounded (no crash/timeout).")
+        exit_state = None
+        try:
+            parsed_exit = body_exit if isinstance(body_exit, dict) else json.loads(body_exit or "{}")
+            exit_state = parsed_exit.get("state")
+        except Exception:
+            exit_state = None
+
+        # Exit without the background flag must stop the app from any state
+        if status_exit != 200:
+            helpers.finish(result, logs, "FAILED", f"applications/exit returned {status_exit} while app was BACKGROUND (expected 200).")
+        elif exit_state != "STOPPED":
+            helpers.finish(result, logs, "FAILED", f"applications/exit response state is '{exit_state}' (expected STOPPED).")
+        elif state_after != "STOPPED":
+            helpers.finish(result, logs, "FAILED", f"Exit returned 200 but state is '{state_after}' (expected STOPPED).")
         else:
-            # Any other code: treat as FAILED (keeps expectations clear) but still “graceful” from stability standpoint.
-            helpers.finish(result, logs, "FAILED", f"Unexpected exit status {status_exit} while app backgrounded (expected 200 or 400).")
+            helpers.finish(result, logs, "PASS", "Exit succeeded (200) while app was BACKGROUND and state is STOPPED.")
 
     except helpers.UnsupportedOperationError as e:
         helpers.finish(result, logs, "OPTIONAL_FAILED", f"Unsupported op: {e.topic}")
@@ -174,7 +177,7 @@ def run_exit_app_without_parameters_check(dab_topic, test_name, tester, device_i
     DAB 2.0 – applications/exit missing parameters (negative)
 
     PASS only if:
-      - applications/exit returns 400 when request body is empty OR missing appId.
+      - applications/exit returns 400 with an "error" field when request body is empty OR missing appId.
     OPTIONAL_FAILED if:
       - applications/exit not implemented (501) or not supported by capability gate.
     FAILED if:
@@ -209,14 +212,16 @@ def run_exit_app_without_parameters_check(dab_topic, test_name, tester, device_i
             helpers.finish(result, logs, "FAILED", f"Expected 400 for empty body, got {status_empty}.")
             return result
 
-        # Optional: best-effort check for an error message without making it a hard requirement
+        # A 400 must explain the error in the "error" field (spec 4, common status codes)
         try:
             parsed_empty = body_empty if isinstance(body_empty, dict) else json.loads(body_empty or "{}")
-            msg_empty = parsed_empty.get("message") or parsed_empty.get("error") or parsed_empty.get("details")
-            if msg_empty:
-                helpers.log_line(logs, "INFO", f"error message (empty body)='{msg_empty}'", result=result)
+            msg_empty = parsed_empty.get("error")
         except Exception:
-            pass
+            msg_empty = None
+        if not isinstance(msg_empty, str) or not msg_empty:
+            helpers.finish(result, logs, "FAILED", "400 response for empty body has no 'error' field.")
+            return result
+        helpers.log_line(logs, "INFO", f"error message (empty body)='{msg_empty}'", result=result)
 
         # Case 2: Missing appId (e.g., irrelevant payload)
         helpers.log_line(logs, "STEP", "Sending applications/exit with missing appId: {\"foo\":\"bar\"}.", result=result)
@@ -231,14 +236,15 @@ def run_exit_app_without_parameters_check(dab_topic, test_name, tester, device_i
             helpers.finish(result, logs, "FAILED", f"Expected 400 for missing appId, got {status_missing}.")
             return result
 
-        # Optional: best-effort message capture
         try:
             parsed_missing = body_missing if isinstance(body_missing, dict) else json.loads(body_missing or "{}")
-            msg_missing = parsed_missing.get("message") or parsed_missing.get("error") or parsed_missing.get("details")
-            if msg_missing:
-                helpers.log_line(logs, "INFO", f"error message (missing appId)='{msg_missing}'", result=result)
+            msg_missing = parsed_missing.get("error")
         except Exception:
-            pass
+            msg_missing = None
+        if not isinstance(msg_missing, str) or not msg_missing:
+            helpers.finish(result, logs, "FAILED", "400 response for missing appId has no 'error' field.")
+            return result
+        helpers.log_line(logs, "INFO", f"error message (missing appId)='{msg_missing}'", result=result)
 
         helpers.finish(result, logs, "PASS", "applications/exit rejected empty/missing appId requests with 400 as expected.")
 
