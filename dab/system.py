@@ -6,6 +6,7 @@ from util.enforcement_manager import EnforcementManager
 from logger import LOGGER
 from schema import list_system_settings_schema_20, list_system_settings_schema_21
 import dab_tester
+from jsonschema import validate
 
 def restart(test_result, durationInMs=0,expectedLatencyMs=0):
     try:
@@ -73,6 +74,17 @@ def settings_list(test_result, durationInMs=0, expectedLatencyMs=0):
     version = getattr(dab_tester, "DAB_VERSION", None) or "2.0"
     schema = list_system_settings_schema_21 if version == "2.1" else list_system_settings_schema_20
     required_keys = schema.get("required", [])
+
+    # Types and enum values of the advertised settings. Unsupported settings
+    # must be omitted (spec 5.3), so only "status" is mandatory here.
+    try:
+        validate(instance=response, schema={**schema, "required": ["status"]})
+    except Exception as error:
+        msg = f"system/settings/list ({version}) schema error: {str(error).splitlines()[0]}"
+        LOGGER.warn(msg)
+        if getattr(test_result, "logs", None) is not None:
+            test_result.logs.append(msg)
+        return False
 
     # Compute and log missing fields (soft — do not fail)
     missing = [k for k in required_keys if k not in response]
