@@ -18,7 +18,10 @@ import dab.content
 import dab.output
 import dab.version
 import argparse
+import builtins
 import fnmatch
+import types
+from readchar import readchar
 from logger import LOGGER
 from util.config_loader import init_interactive_setup, make_app_id_list
 from util.runtime_config_store import load_config, apply_overrides, save_config
@@ -27,11 +30,49 @@ from util.argument_validator import validate_arguments_and_warn
 config_path = os.environ.get("DAB_CONFIG_JSON")
 
 SUITE_NAMES = ["conformance", "output_image", "netflix", "functional"]
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def case_matches(test_id, requested_case):
     """Return whether a requested case matches a listed test ID."""
     return fnmatch.fnmatchcase(test_id, requested_case)
+
+
+def is_manual_test(test_case):
+    """
+    Return whether a test case may prompt the operator for input.
+
+    Follows the functions referenced by the test tuple through the calls
+    they make inside this project and reports True when any of them reaches
+    input() or readchar() (e.g. through yes_or_no or YesNoQuestion).
+    """
+    pending = [(obj.__code__, obj.__globals__) for obj in test_case if isinstance(obj, types.FunctionType)]
+    seen = set()
+    while pending:
+        code, scope = pending.pop()
+        if code in seen:
+            continue
+        seen.add(code)
+        # Lambdas and nested functions share the enclosing globals
+        pending.extend((const, scope) for const in code.co_consts if isinstance(const, types.CodeType))
+        found = [scope.get(name, getattr(builtins, name, None)) for name in code.co_names]
+        # Resolve attribute access such as helpers.yes_or_no or dab.applications.launch
+        modules = [obj for obj in found if isinstance(obj, types.ModuleType)]
+        while modules:
+            module = modules.pop()
+            for name in code.co_names:
+                obj = getattr(module, name, None)
+                if isinstance(obj, types.ModuleType) and obj not in found:
+                    modules.append(obj)
+                found.append(obj)
+        for obj in found:
+            if obj is builtins.input or obj is readchar:
+                return True
+            if (isinstance(obj, types.FunctionType)
+                    and obj.__code__.co_filename.startswith(PROJECT_DIR)
+                    and "site-packages" not in obj.__code__.co_filename):
+                pending.append((obj.__code__, obj.__globals__))
+    return False
 
 
 if __name__ == "__main__":
@@ -60,8 +101,17 @@ if __name__ == "__main__":
                         default="localhost")
 
     parser.add_argument("-c","--case", 
-                        help="test only the specified case(s). Use comma to separate multiple. Supports shell-style wildcards (*, ?, []). Ex: -c InputLongKeyPressKeyDown,AppLaunchNegativeTest or -c 'SystemPower*'",
+                        help="test only the specified case(s). Use comma to separate multiple or repeat -c. Supports shell-style wildcards (*, ?, []). Ex: -c InputLongKeyPressKeyDown,AppLaunchNegativeTest or -c 'SystemPower*' -c 'App*'",
+                        action="append",
                         type=str)
+
+    manual_group = parser.add_mutually_exclusive_group()
+    manual_group.add_argument("--skip-manual",
+                        help="skip the test cases that prompt the operator for input",
+                        action="store_true")
+    manual_group.add_argument("--manual-only",
+                        help="run only the test cases that prompt the operator for input",
+                        action="store_true")
 
     parser.add_argument("-o","--output", 
                         help="output location for the json file",
@@ -90,7 +140,6 @@ if __name__ == "__main__":
                     help="Print current runtime config and exit.")
 
     parser.set_defaults(output="")
-    parser.set_defaults(case=99999)
     args = parser.parse_args()
     validate_arguments_and_warn(args)
     LOGGER.verbose = bool(args.verbose)
@@ -185,12 +234,25 @@ if __name__ == "__main__":
         suite_to_run = ALL_SUITES
         LOGGER.info(f"No suite specified. All suites selected: {', '.join(suite_to_run.keys())}.")
 
-    if (args.list == True):
-        requested_cases = (
-            [c.strip() for c in args.case.split(",")]
-            if isinstance(args.case, str) and args.case
-            else None
+    if args.skip_manual or args.manual_only:
+        suite_to_run = {
+            suite: [test_case for test_case in test_cases if is_manual_test(test_case) == args.manual_only]
+            for suite, test_cases in suite_to_run.items()
+        }
+        suite_to_run = {suite: test_cases for suite, test_cases in suite_to_run.items() if test_cases}
+        LOGGER.info(
+            f"{'Only manual' if args.manual_only else 'Skipping manual'} test cases: "
+            f"{sum(len(test_cases) for test_cases in suite_to_run.values())} test(s) selected."
         )
+
+    requested_cases = [
+        c.strip()
+        for case_arg in (args.case or [])
+        for c in case_arg.split(",")
+        if c.strip()
+    ]
+
+    if (args.list == True):
         for suite in suite_to_run:
             LOGGER.info(f"Listing test cases for suite '{suite}'...")
             listed = 0
@@ -199,7 +261,7 @@ if __name__ == "__main__":
                     topic, _body_spec, _func, _expected, title, _is_neg, _ver = Tester.unpack_test_case(test_case)
                     if topic and title:
                         test_id = to_test_id(f"{topic}/{title}")
-                        if requested_cases is None or any(
+                        if not requested_cases or any(
                             case_matches(test_id, requested_case)
                             for requested_case in requested_cases
                         ):
@@ -212,7 +274,7 @@ if __name__ == "__main__":
             LOGGER.ok(f"Listed {listed} case(s) in suite '{suite}'.")
 
     else:
-        if ((not isinstance(args.case, (str)) or len(args.case) == 0)):
+        if not requested_cases:
             LOGGER.result("Testing all cases")
             for suite in suite_to_run:
                 LOGGER.info(f"Preparing to run suite '{suite}' with {len(suite_to_run[suite])} tests.")
@@ -221,7 +283,6 @@ if __name__ == "__main__":
                 LOGGER.ok(f"Completed suite '{suite}'.")
         else:
             # Handle single or multiple cases passed via -c
-            requested_cases = [c.strip() for c in args.case.split(",")]
             LOGGER.info(f"Requested case IDs: {requested_cases}")
             matched_count = 0
             selected_results = []
