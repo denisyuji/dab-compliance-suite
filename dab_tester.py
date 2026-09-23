@@ -1297,7 +1297,17 @@ class DabTester:
 
             if response:
                 resp_json = json.loads(response)
-                self.dab_version = resp_json.get("DAB Version", "2.0")
+                # Spec §6: {"versions": ["2.0", "2.1"]}; use the highest one.
+                # "DAB Version" is kept as a fallback for older bridges.
+                versions = resp_json.get("versions")
+                if isinstance(versions, list) and versions:
+                    try:
+                        self.dab_version = str(max(versions, key=lambda v: Version(str(v))))
+                    except InvalidVersion:
+                        self.logger.warn(f"Invalid entry in versions {versions}; using the last one.")
+                        self.dab_version = str(versions[-1])
+                else:
+                    self.dab_version = resp_json.get("DAB Version", "2.0")
                 DAB_VERSION = self.dab_version
                 self.logger.info(f"DAB version detected: {self.dab_version}.")
             else:
