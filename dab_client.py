@@ -9,6 +9,10 @@ from logger import LOGGER
 from util.argument_validator import handle_connection_error
 
 METRICS_TIMES = 5
+# Operations whose reply may come as a series of chunks (spec 5.3,
+# system/logs/stop-collection). The response topic stays subscribed until
+# end_chunked_response() is called.
+CHUNKED_OPERATIONS = {"system/logs/stop-collection"}
 
 class DabClient:
     def __init__(self):
@@ -19,6 +23,7 @@ class DabClient:
         self.__response_chunks = []
         self.__response_dic = {}
         self.__code = -1
+        self.__chunked_topic = None
 
     def __on_message(self, client, userdata, message):
         self.__response_dic = json.loads(message.payload)
@@ -32,6 +37,17 @@ class DabClient:
 
     def get_response_chunk(self):
         return self.__response_chunks.pop(0) if self.__response_chunks else None
+
+    def end_chunked_response(self):
+        # Stop listening to the response topic kept open for a chunked reply
+        if not self.__chunked_topic:
+            return
+        try:
+            self.__client.message_callback_remove(self.__chunked_topic)
+        except:
+            pass
+        self.__client.unsubscribe(self.__chunked_topic)
+        self.__chunked_topic = None
 
     def __on_message_metrics(self, client, userdata, message):
         if not message.payload:
@@ -60,6 +76,7 @@ class DabClient:
         # Send request and block until get the response or timeout
         topic = "dab/" + device_id+"/" + operation
         response_topic = f"dab/_response/{uuid.uuid4().hex}"
+        self.end_chunked_response()
         self.__response_chunks.clear()
         self.__response_dic = {}
         self.__code = -1
@@ -77,6 +94,10 @@ class DabClient:
         self.__client.publish(topic,msg,properties=properties)
         if not (self.__lock.acquire(timeout = 90)):
             self.__code = 100
+        if operation in CHUNKED_OPERATIONS and self.__code != 100:
+            # Keep receiving the remaining chunks; see end_chunked_response()
+            self.__chunked_topic = response_topic
+            return
         try:
             self.__client.message_callback_remove(response_topic)
         except:
