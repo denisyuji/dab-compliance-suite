@@ -9,11 +9,11 @@ import sys
 
 def run_content_open_invalid_content_id_check(dab_topic, test_name, tester, device_id):
     """
-    DAB 2.1 – content/open invalid contentId (negative)
+    DAB 2.1 – content/open unknown entryId (negative)
     Goal:
-      - Call content/open with a clearly invalid/non-existent contentId.
+      - Call content/open with a clearly invalid/non-existent entryId.
       - Verify the device does NOT treat it as success.
-      - Expect a client error (400 Bad Request) for invalid contentId.
+      - Expect 404 for an unknown entryId (spec 5.10, content/open).
       - If the operation is not implemented (501), treat as OPTIONAL_FAILED.
     """
     test_id = to_test_id(f"{dab_topic}/{test_name}")
@@ -24,30 +24,30 @@ def run_content_open_invalid_content_id_check(dab_topic, test_name, tester, devi
 
     try:
         helpers.log_line(logs, "TEST", f"{test_name} (id={test_id}, device={device_id})", result=result)
-        helpers.log_line(logs, "DESC", "Ensure content/open rejects a non-existent contentId with an appropriate client error.", result=result)
+        helpers.log_line(logs, "DESC", "Ensure content/open rejects a non-existent entryId with 404.", result=result)
         helpers.log_line(logs, "DESC", "Required operation: content/open.", result=result)
-        helpers.log_line(logs, "DESC", "PASS if content/open returns 400 (client error) for the invalid contentId, not 200.", result=result)
+        helpers.log_line(logs, "DESC", "PASS if content/open returns 404 with an error for the unknown entryId, not 200.", result=result)
 
         cap_spec = "ops: content/open"
         if not helpers.require_capabilities(tester, device_id, cap_spec, result, logs):
             return result
 
-        payload = json.dumps({"contentId": invalid_content_id})
-        helpers.log_line(logs, "STEP", f"Sending content/open with invalid contentId={invalid_content_id!r}, payload={payload}", result=result)
+        payload = json.dumps({"entryId": invalid_content_id})
+        helpers.log_line(logs, "STEP", f"Sending content/open with unknown entryId={invalid_content_id!r}, payload={payload}", result=result)
 
         status, body = helpers.execute_cmd_and_log(tester, device_id, dab_topic, payload, logs=logs, result=result)
-        helpers.log_line(logs, "INFO", f"content/open returned status={status} for invalid contentId.", result=result)
+        helpers.log_line(logs, "INFO", f"content/open returned status={status} for unknown entryId.", result=result)
 
         if status == 501:
             helpers.finish(result, logs, "OPTIONAL_FAILED", "content/open is not implemented on this device (status=501).")
             return result
-        elif status == 400:
+        elif status == 404:
             pass
         elif status == 200:
-            helpers.finish(result, logs, "FAILED", "content/open returned 200 for an invalid/non-existent contentId; expected 400.")
+            helpers.finish(result, logs, "FAILED", "content/open returned 200 for a non-existent entryId; expected 404.")
             return result
         else:
-            helpers.finish(result, logs, "FAILED", f"Unexpected status for invalid contentId: got {status}, expected 400 (Bad Request).")
+            helpers.finish(result, logs, "FAILED", f"Unexpected status for unknown entryId: got {status}, expected 404.")
             return result
 
         error_body = None
@@ -58,7 +58,7 @@ def run_content_open_invalid_content_id_check(dab_topic, test_name, tester, devi
                 else:
                     error_body = body
             except Exception as e:
-                helpers.finish(result, logs, "FAILED", f"content/open error response for invalid contentId is not valid JSON: {e}")
+                helpers.finish(result, logs, "FAILED", f"content/open error response for unknown entryId is not valid JSON: {e}")
                 return result
 
         if isinstance(error_body, dict):
@@ -66,17 +66,17 @@ def run_content_open_invalid_content_id_check(dab_topic, test_name, tester, devi
             if error_fields:
                 helpers.log_line(logs, "INFO", "content/open error payload fields: " + ", ".join(error_fields), result=result)
             else:
-                helpers.log_line(logs, "INFO", "content/open error payload has no explicit error/message fields; relying on status=400 only.", result=result)
+                helpers.log_line(logs, "INFO", "content/open error payload has no explicit error/message fields; relying on status=404 only.", result=result)
         else:
-            helpers.log_line(logs, "INFO", "content/open returned status=400 with no structured JSON body; treating as valid client error.", result=result)
+            helpers.log_line(logs, "INFO", "content/open returned status=404 with no structured JSON body; treating as valid client error.", result=result)
 
-        helpers.finish(result, logs, "PASS", "content/open correctly returned a client error (400) for a non-existent contentId.")
+        helpers.finish(result, logs, "PASS", "content/open correctly returned 404 for a non-existent entryId.")
 
     except helpers.UnsupportedOperationError as e:
         helpers.finish(result, logs, "OPTIONAL_FAILED", f"Unsupported op: {e.topic}")
 
     except Exception as e:
-        helpers.finish(result, logs, "SKIPPED", f"Internal error during content/open invalid contentId check: {e}")
+        helpers.finish(result, logs, "SKIPPED", f"Internal error during content/open unknown entryId check: {e}")
 
     finally:
         final = getattr(result, "test_result", "UNKNOWN")

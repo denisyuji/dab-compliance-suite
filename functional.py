@@ -35,6 +35,7 @@ APP_STATE_CHECK_WAIT = 2
 APP_RELAUNCH_WAIT = 10
 CONTENT_LOAD_WAIT = 20
 DEVICE_REBOOT_WAIT = 180  # Max wait for device reboot
+FACTORY_RESET_WAIT = 600  # Spec 5.3: factory reset must complete within 10 minutes
 TELEMETRY_DURATION_MS = 5000
 TELEMETRY_METRICS_WAIT = 30  # Max wait for telemetry metrics (seconds)
 HEALTH_CHECK_INTERVAL = 5   # Seconds between health check polls
@@ -520,6 +521,41 @@ def get_install_targets(default_app_ids=("Sample_App", "Sample_App1")):
     return targets
 
 # === Helper: Restart Device  ===
+
+def wait_for_factory_reset_complete(tester, device_id, logs, timeout=FACTORY_RESET_WAIT):
+    """
+    Waits for DAB to go down after system/factory-reset and to come back.
+    The response is sent before the reset starts (spec 5.3), so a healthy
+    answer right after it proves nothing. DAB must come back with the same
+    Device ID, checked on the topic and in device/info.
+    Returns True when the device recovered with the same Device ID.
+    """
+    start = time.time()
+    went_down = False
+    while time.time() - start < timeout:
+        try:
+            # result=None: timeouts are expected while the device resets
+            rc, resp = execute_cmd_and_log(tester, device_id, "health-check/get", "{}", logs, None)
+            healthy = dab_status_from(resp, rc) == 200 and json.loads(resp).get("healthy") is True
+        except Exception:
+            healthy = False
+        if not healthy:
+            went_down = True
+        elif went_down:
+            try:
+                rc, resp = execute_cmd_and_log(tester, device_id, "device/info", "{}", logs, None)
+                reported_id = json.loads(resp).get("deviceId")
+            except Exception:
+                reported_id = None
+            line = f"[INFO] Device back after {int(time.time() - start)}s; device/info deviceId={reported_id!r}, expected {device_id!r}."
+            LOGGER.info(line)
+            logs.append(line)
+            return reported_id == device_id
+        time.sleep(HEALTH_CHECK_INTERVAL)
+    line = f"[INFO] Device did not {'come back' if went_down else 'go down'} within {timeout}s after factory reset."
+    LOGGER.info(line)
+    logs.append(line)
+    return False
 
 def fire_and_forget_restart(dab_client, device_id):
     """
@@ -2638,7 +2674,7 @@ def run_set_invalid_voice_assistant_check(dab_topic, test_name, tester, device_i
     """
     test_id = to_test_id(f"{dab_topic}/{test_name}")
     invalid_assistant = "invalid"
-    payload = json.dumps({"voiceAssistant": invalid_assistant})
+    payload = json.dumps({"voiceSystem": {"name": invalid_assistant, "enabled": True}})
     logs = []
     result = TestResult(test_id, device_id, "voice/set", payload, "UNKNOWN", "", logs)
     status = "N/A"
@@ -2649,7 +2685,7 @@ def run_set_invalid_voice_assistant_check(dab_topic, test_name, tester, device_i
             f"[TEST] Set Invalid Voice Assistant (Negative) — {test_name} (test_id={test_id}, device={device_id})",
             f"[DESC] Goal: Attempt to set a voice assistant to an invalid name ('{invalid_assistant}') and expect an error.",
             "[DESC] Required operations: voice/set.",
-            "[DESC] Pass criteria: The 'voice/set' command must return a non-200 status code.",
+            "[DESC] Pass criteria: The 'voice/set' command must return 400.",
         ):
             LOGGER.result(line)
             logs.append(line)
@@ -2665,7 +2701,7 @@ def run_set_invalid_voice_assistant_check(dab_topic, test_name, tester, device_i
             logs.append(line)
             _, resp_list = execute_cmd_and_log(tester, device_id, "voice/list", "{}", logs)
             if resp_list:
-                supported_list = json.loads(resp_list).get("voiceAssistants", [])
+                supported_list = json.loads(resp_list).get("voiceSystems", [])
                 logs.append(f"[INFO] Currently supported assistants: {supported_list}")
         except Exception:
             logs.append("[INFO] Could not list voice assistants; proceeding with test.")
@@ -2679,12 +2715,18 @@ def run_set_invalid_voice_assistant_check(dab_topic, test_name, tester, device_i
         status = dab_status_from(response, rc)
 
         # Step 2: Validate that the command failed as expected
-        if status != 200:
+        if status == 400:
             result.test_result = "PASS"
             line = f"[RESULT] PASS — The device correctly rejected the invalid assistant with status {status}."
-        else:
+        elif status == 501:
+            result.test_result = "OPTIONAL_FAILED"
+            line = "[RESULT] OPTIONAL_FAILED — voice/set returned 501."
+        elif status == 200:
             result.test_result = "FAILED"
             line = f"[RESULT] FAILED — The device unexpectedly accepted the invalid assistant with status 200."
+        else:
+            result.test_result = "FAILED"
+            line = f"[RESULT] FAILED — The device returned {status} for an unknown voice system (expected 400)."
         
         LOGGER.result(line)
         logs.append(line)
@@ -2748,17 +2790,24 @@ def run_device_restart_and_telemetry_check(dab_topic, test_name, tester, device_
         LOGGER.result(line); logs.append(line)
         execute_cmd_and_log(tester, device_id, "system/restart", "{}", logs, result)
 
-        line = f"[INFO] Polling health-check/get every {HEALTH_CHECK_INTERVAL}s for up to {DEVICE_REBOOT_WAIT}s..."
+        # The restart response is sent when the restart starts (spec 5.3), so
+        # first wait for DAB to go away, then for it to come back.
+        # result=None: timeouts are expected here and must not fail the test.
+        line = f"[INFO] Waiting for the device to go down, then polling health-check/get every {HEALTH_CHECK_INTERVAL}s for up to {DEVICE_REBOOT_WAIT}s..."
         LOGGER.info(line); logs.append(line)
         t0 = time.time()
+        went_down = False
         while time.time() - t0 < DEVICE_REBOOT_WAIT:
             try:
-                rc, resp = execute_cmd_and_log(tester, device_id, "health-check/get", "{}", logs, result)
-                if dab_status_from(resp, rc) == 200:
-                    device_ready = True
-                    break
+                rc, resp = execute_cmd_and_log(tester, device_id, "health-check/get", "{}", logs, None)
+                healthy = dab_status_from(resp, rc) == 200
             except Exception:
-                pass
+                healthy = False
+            if not healthy:
+                went_down = True
+            elif went_down:
+                device_ready = True
+                break
             time.sleep(HEALTH_CHECK_INTERVAL)
 
         if not device_ready:
@@ -2786,37 +2835,13 @@ def run_device_restart_and_telemetry_check(dab_topic, test_name, tester, device_
             LOGGER.result(line); logs.append(line)
             return result
 
-        # 3) Passive metrics wait (no re-start in loop)
-        line = f"[STEP] Listening for telemetry metrics for up to {TELEMETRY_METRICS_WAIT}s..."
+        # 3) Listen on device-telemetry/metrics (does not start telemetry again)
+        line = "[STEP] Listening for telemetry metrics on device-telemetry/metrics..."
         LOGGER.result(line); logs.append(line)
-        checker = DabChecker(tester)
-
-        deadline = time.time() + TELEMETRY_METRICS_WAIT
-        while time.time() < deadline:
-            ok, chk = (False, "")
-            try:
-                # IMPORTANT: passive peek (must NOT start telemetry again)
-                ok, chk = checker.check(device_id, "device-telemetry/metrics-peek", payload_start)
-            except Exception:
-                pass
-
-            if chk:  # use checker_log per review
-                logs.append(f"[INFO] checker_log: {chk}")
-
-            # Guarded peek of last sample if your client exposes it
-            sample_fn = getattr(getattr(tester, "dab_client", None), "last_metrics_sample", None)
-            sample_msg = None
-            if callable(sample_fn):
-                try:
-                    sample_msg = sample_fn()
-                except Exception:
-                    sample_msg = None
-
-            if ok or sample_msg:
-                metrics_received = True
-                break
-
-            time.sleep(1.0)
+        ok, chk = tester.dab_checker.check(device_id, "device-telemetry/start", payload_start)
+        if chk:
+            logs.append(f"[INFO] checker_log: {chk}")
+        metrics_received = bool(ok)
 
         if not metrics_received:
             result.test_result = "FAILED"
@@ -3049,7 +3074,7 @@ def run_voice_list_with_no_voice_assistant(dab_topic, test_name, tester, device_
             f"[TEST] Voice List With No Assistant (Negative/Optional) — {test_name} (test_id={test_id}, device={device_id})",
             "[DESC] Goal: Request the list of voice assistants and expect an empty list if none are configured.",
             "[DESC] Required operations: voice/list.",
-            "[DESC] Pass criteria: Returns a 200 status with an empty 'voiceAssistants' array.",
+            "[DESC] Pass criteria: Returns a 200 status with an empty 'voiceSystems' array.",
             "[DESC] Note: If assistants are pre-configured, this test is marked OPTIONAL_FAILED.",
         ):
             LOGGER.result(line)
@@ -3066,11 +3091,12 @@ def run_voice_list_with_no_voice_assistant(dab_topic, test_name, tester, device_
         rc, response = execute_cmd_and_log(tester, device_id, "voice/list", "{}", logs, result)
         status = dab_status_from(response, rc)
         
-        assistants = []
+        assistants = None
         try:
             if response:
-                assistants = json.loads(response).get("voiceAssistants", [])
-                assistant_count = len(assistants)
+                assistants = json.loads(response).get("voiceSystems")
+                if isinstance(assistants, list):
+                    assistant_count = len(assistants)
         except Exception:
             logs.append(f"[INFO] Could not parse voice/list response: {response}")
 
@@ -3078,7 +3104,7 @@ def run_voice_list_with_no_voice_assistant(dab_topic, test_name, tester, device_
         if status == 200 and isinstance(assistants, list) and len(assistants) == 0:
             result.test_result = "PASS"
             line = "[RESULT] PASS — Device correctly returned an empty list of assistants."
-        elif status == 200 and len(assistants) > 0:
+        elif status == 200 and isinstance(assistants, list) and len(assistants) > 0:
             result.test_result = "OPTIONAL_FAILED"
             line = f"[RESULT] OPTIONAL_FAILED — Device has pre-configured assistants: {assistants}"
         else:
@@ -3351,15 +3377,15 @@ def run_network_reset_check(dab_topic, test_name, tester, device_id):
         # Header and description
         for line in (
             f"[TEST] Network Reset Check — {test_name} (test_id={test_id}, device={device_id})",
-            "[DESC] Goal: Reset all network settings and then verify the device is still responsive via 'system/info'.",
-            "[DESC] Required operations: system/network-reset, system/info.",
-            "[DESC] Pass criteria: The 'system/info' command must succeed after the network reset.",
+            "[DESC] Goal: Reset all network settings and then verify the device is still responsive via 'device/info'.",
+            "[DESC] Required operations: system/network-reset, device/info.",
+            "[DESC] Pass criteria: The 'device/info' command must succeed after the network reset.",
         ):
             LOGGER.result(line)
             logs.append(line)
 
         # Capability gate
-        if not require_capabilities(tester, device_id, "ops: system/network-reset, system/info", result, logs):
+        if not require_capabilities(tester, device_id, "ops: system/network-reset, device/info", result, logs):
             return result
 
         # Step 1: Execute the network reset
@@ -3378,18 +3404,18 @@ def run_network_reset_check(dab_topic, test_name, tester, device_id):
         time.sleep(15)
 
         # Step 2: Verify DAB is still responsive
-        line = "[STEP] Verifying DAB responsiveness with 'system/info'."
+        line = "[STEP] Verifying DAB responsiveness with 'device/info'."
         LOGGER.result(line)
         logs.append(line)
-        rc, response = execute_cmd_and_log(tester, device_id, "system/info", "{}", logs, result)
+        rc, response = execute_cmd_and_log(tester, device_id, "device/info", "{}", logs, result)
         info_status = dab_status_from(response, rc)
         
         if info_status == 200:
             result.test_result = "PASS"
-            line = "[RESULT] PASS — Device responded successfully to 'system/info' after network reset."
+            line = "[RESULT] PASS — Device responded successfully to 'device/info' after network reset."
         else:
             result.test_result = "FAILED"
-            line = f"[RESULT] FAILED — 'system/info' failed with status {info_status} after network reset."
+            line = f"[RESULT] FAILED — 'device/info' failed with status {info_status} after network reset."
 
         LOGGER.result(line)
         logs.append(line)
@@ -3428,14 +3454,14 @@ def run_factory_reset_and_recovery_check(dab_topic, test_name, tester, device_id
         for line in (
             f"[TEST] Factory Reset and Recovery Check — {test_name} (test_id={test_id}, device={device_id})",
             "[DESC] Goal: Initiate a factory reset and poll until the device comes back online and is healthy.",
-            "[DESC] Required operations: system/factory-reset, health-check/get.",
-            "[DESC] Pass criteria: The device must become healthy within the timeout period after a reset.",
+            "[DESC] Required operations: system/factory-reset, health-check/get, device/info.",
+            "[DESC] Pass criteria: The device must become healthy with the same Device ID within 10 minutes after a reset.",
         ):
             LOGGER.result(line)
             logs.append(line)
 
         # Capability gate
-        if not require_capabilities(tester, device_id, "ops: system/factory-reset, health-check/get", result, logs):
+        if not require_capabilities(tester, device_id, "ops: system/factory-reset, health-check/get, device/info", result, logs):
             return result
 
         # Step 1: Send the factory reset command
@@ -3450,28 +3476,18 @@ def run_factory_reset_and_recovery_check(dab_topic, test_name, tester, device_id
             logs.append(line)
             return result
 
-        # Step 2: Poll for health check until the device recovers
-        line = f"[WAIT] Polling health-check every {HEALTH_CHECK_INTERVAL}s for up to {DEVICE_REBOOT_WAIT}s..."
+        # Step 2: Wait for the device to go down and recover
+        line = f"[WAIT] Polling health-check every {HEALTH_CHECK_INTERVAL}s for up to {FACTORY_RESET_WAIT}s..."
         LOGGER.info(line)
         logs.append(line)
-        
-        start_time = time.time()
-        while time.time() - start_time < DEVICE_REBOOT_WAIT:
-            try:
-                rc_health, resp_health = execute_cmd_and_log(tester, device_id, "health-check/get", "{}", logs, result)
-                if dab_status_from(resp_health, rc_health) == 200:
-                    device_recovered = True
-                    break
-            except Exception:
-                pass # Suppress errors while device is offline
-            time.sleep(HEALTH_CHECK_INTERVAL)
+        device_recovered = wait_for_factory_reset_complete(tester, device_id, logs)
 
         if device_recovered:
             result.test_result = "PASS"
-            line = "[RESULT] PASS — Device recovered and became healthy after factory reset."
+            line = "[RESULT] PASS — Device recovered with the same Device ID and became healthy after factory reset."
         else:
             result.test_result = "FAILED"
-            line = f"[RESULT] FAILED — Device did not recover within the {DEVICE_REBOOT_WAIT}s timeout."
+            line = f"[RESULT] FAILED — Device did not recover with the same Device ID within the {FACTORY_RESET_WAIT}s timeout."
 
         LOGGER.result(line)
         logs.append(line)
@@ -7157,9 +7173,9 @@ def run_logs_collection_app_install_and_launch_check(dab_topic, test_name, teste
             return result
 
         # short wait to allow finalization
-        msg = f"[WAIT] {INSTALL_WAIT}s after install for finalization"
+        msg = f"[WAIT] {APP_INSTALL_WAIT}s after install for finalization"
         LOGGER.info(msg); logs.append(msg)
-        time.sleep(INSTALL_WAIT)
+        time.sleep(APP_INSTALL_WAIT)
 
         # Step 3: Launch the newly installed app
         msg = f"[STEP] applications/launch {payload_app}"
@@ -7503,7 +7519,7 @@ def run_content_search_special_chars_validation(dab_topic, test_name, tester, de
     SPECIAL_QUERY = "!@#$%^&*()"
     test_id = to_test_id(f"{dab_topic}/{test_name}")
     logs = []
-    payload = json.dumps({"query": SPECIAL_QUERY})
+    payload = json.dumps({"searchText": SPECIAL_QUERY})
 
     # TestResult(test_id, device_id, dab_topic, request_payload, test_result, details, logs)
     result = TestResult(test_id, device_id, "content/search", payload, "UNKNOWN", "", logs)
@@ -7569,13 +7585,10 @@ def run_content_search_special_chars_validation(dab_topic, test_name, tester, de
         if 200 <= (status_code or 0) < 300:
             # Expect empty results array on success
             mode = "200_empty"
-            # Accept either "results": [] or "items": []
+            # Search results are returned in "entries" (spec 5.10)
             results = None
             if isinstance(obj, dict):
-                if "results" in obj:
-                    results = obj.get("results")
-                elif "items" in obj:
-                    results = obj.get("items")
+                results = obj.get("entries")
 
             if not json_ok:
                 result.test_result = "FAILED"
@@ -7595,7 +7608,7 @@ def run_content_search_special_chars_validation(dab_topic, test_name, tester, de
                     LOGGER.result(line); logs.append(line)
             else:
                 result.test_result = "FAILED"
-                line = "[RESULT] FAILED — 200 OK but expected an empty 'results' (or 'items') array."
+                line = "[RESULT] FAILED — 200 OK but expected an empty 'entries' array."
                 LOGGER.result(line); logs.append(line)
 
         elif 400 <= (status_code or 0) < 500:
@@ -7605,7 +7618,10 @@ def run_content_search_special_chars_validation(dab_topic, test_name, tester, de
             if json_ok and isinstance(obj, dict):
                 if "error" in obj:
                     err_obj = obj["error"]
-                    if isinstance(err_obj, dict):
+                    # Spec: the explanation is a string in "error"
+                    if isinstance(err_obj, str):
+                        clear_error = bool(err_obj.strip())
+                    elif isinstance(err_obj, dict):
                         msg = str(err_obj.get("message", "")).strip()
                         code = str(err_obj.get("code", "")).strip()
                         status = str(err_obj.get("status", "")).strip()
@@ -9057,7 +9073,8 @@ def run_factory_reset_and_verify_initial_state(dab_topic, test_name, tester, dev
         logs.append(LOGGER.stamp(msg))
 
         for app_id in SAMPLE_APPS:
-            status, resp = execute_cmd_and_log(tester, device_id, "applications/install", json.dumps({"appId": app_id}), logs, result)
+            # applications/install needs a url (spec 5.2); served by the runtime bridge
+            status, resp = execute_cmd_and_log(tester, device_id, "applications/install", json.dumps(ensure_app_available(app_id=app_id)), logs, result)
             if status != 200:
                 msg = f"[WARN] Failed to install app: {app_id}. Status: {status}"
                 LOGGER.warn(msg)
@@ -9114,9 +9131,9 @@ def run_factory_reset_and_verify_initial_state(dab_topic, test_name, tester, dev
         LOGGER.result(msg)
         logs.append(LOGGER.stamp(msg))
 
-        wait_ok = wait_for_factory_reset_complete(tester, device_id, logs, timeout=180)
+        wait_ok = wait_for_factory_reset_complete(tester, device_id, logs)
         if not wait_ok:
-            msg = "[FAILED] Device did not complete factory reset within timeout."
+            msg = "[FAILED] Device did not complete factory reset with the same Device ID within timeout."
             LOGGER.error(msg)
             logs.append(LOGGER.stamp(msg))
             result.test_result = "FAILED"
@@ -10925,7 +10942,7 @@ def run_youtube_recommended_movie_playback_check(dab_topic, test_name, tester, d
     DAB 2.1 – content/open YouTube recommended movie playback
 
     Goal:
-      - Use content/recommendations to get a YouTube movie contentId.
+      - Use content/recommendations to get a YouTube movie entryId.
       - Use content/open to open that content.
       - Optionally verify via applications/get-state that YouTube is in FOREGROUND.
       - Rely on manual verification to confirm that movie playback has started correctly.
@@ -10966,12 +10983,11 @@ def run_youtube_recommended_movie_playback_check(dab_topic, test_name, tester, d
             summary = "Preconditions not met: YouTube not ready or no movie visible in recommendations."
             LOGGER.result(f"[RESULT] OPTIONAL_FAILED – {summary}")
             result.test_result = "OPTIONAL_FAILED"
-            logs.append(summary_line)
             logs.append(summary)
             return result
 
         # --- Step 3: Fetch a recommended movie via content/recommendations ---
-        payload_recs = json.dumps({"appId": app_id, "maxItems": 5})
+        payload_recs = "{}"  # content/recommendations takes no parameters (spec 5.10)
         line = f"[STEP] Requesting YouTube recommendations via content/recommendations with payload: {payload_recs}"
         LOGGER.result(line)
         logs.append(line)
@@ -10984,7 +11000,6 @@ def run_youtube_recommended_movie_playback_check(dab_topic, test_name, tester, d
             summary = "content/recommendations returned 501; content recommendations not supported via DAB."
             LOGGER.result(f"[RESULT] OPTIONAL_FAILED – {summary}")
             result.test_result = "OPTIONAL_FAILED"
-            logs.append(summary_line)
             logs.append(summary)
             return result
 
@@ -10992,7 +11007,6 @@ def run_youtube_recommended_movie_playback_check(dab_topic, test_name, tester, d
             summary = f"content/recommendations failed with status {status_recs}."
             LOGGER.result(f"[RESULT] FAILED – {summary}")
             result.test_result = "FAILED"
-            logs.append(summary_line)
             logs.append(summary)
             return result
 
@@ -11002,47 +11016,41 @@ def run_youtube_recommended_movie_playback_check(dab_topic, test_name, tester, d
             summary = "content/recommendations returned invalid JSON; cannot parse recommendations list."
             LOGGER.result(f"[RESULT] FAILED – {summary}")
             result.test_result = "FAILED"
-            logs.append(summary_line)
             logs.append(summary)
             return result
 
-        items = recs_json.get("recommendations") or recs_json.get("items") or []
+        items = recs_json.get("entries") or []
         if not items:
-            summary = "content/recommendations returned no items; cannot pick a movie contentId."
+            summary = "content/recommendations returned no entries; cannot pick a movie entryId."
             LOGGER.result(f"[RESULT] OPTIONAL_FAILED – {summary}")
             result.test_result = "OPTIONAL_FAILED"
-            logs.append(summary_line)
             logs.append(summary)
             return result
 
-        # Pick the first movie-like item if possible, otherwise first with contentId
+        # Pick the first YouTube movie entry if possible, otherwise the first YouTube entry
+        youtube_items = [item for item in items
+                         if isinstance(item, dict) and str(item.get("appId", "")).lower() == app_id.lower() and item.get("entryId")]
         content_id = None
-        for item in items:
-            if isinstance(item, dict) and item.get("type") == "movie" and item.get("contentId"):
-                content_id = item["contentId"]
+        for item in youtube_items:
+            if "Movies" in (item.get("categories") or []):
+                content_id = item["entryId"]
                 break
-        if content_id is None:
-            for item in items:
-                if isinstance(item, dict):
-                    cid = item.get("contentId")
-                    if cid:
-                        content_id = cid
-                        break
+        if content_id is None and youtube_items:
+            content_id = youtube_items[0]["entryId"]
 
         if not content_id:
-            summary = "Unable to extract a contentId from content/recommendations response."
+            summary = f"No {app_id} entry with an entryId in the content/recommendations response."
             LOGGER.result(f"[RESULT] FAILED – {summary}")
             result.test_result = "FAILED"
-            logs.append(summary_line)
             logs.append(summary)
             return result
 
-        line = f"[INFO] Selected recommended movie contentId: {content_id!r}"
+        line = f"[INFO] Selected recommended movie entryId: {content_id!r}"
         LOGGER.result(line)
         logs.append(line)
 
         # --- Step 4: Open the movie via content/open ---
-        open_payload = json.dumps({"appId": app_id, "contentId": content_id})
+        open_payload = json.dumps({"entryId": content_id})
         line = f"[STEP] Opening the recommended movie via content/open with payload: {open_payload}"
         LOGGER.result(line)
         logs.append(line)
@@ -11055,7 +11063,6 @@ def run_youtube_recommended_movie_playback_check(dab_topic, test_name, tester, d
             summary = "content/open returned 501; cannot open content via DAB on this device."
             LOGGER.result(f"[RESULT] OPTIONAL_FAILED – {summary}")
             result.test_result = "OPTIONAL_FAILED"
-            logs.append(summary_line)
             logs.append(summary)
             return result
 
@@ -11063,7 +11070,6 @@ def run_youtube_recommended_movie_playback_check(dab_topic, test_name, tester, d
             summary = f"content/open failed with status {status_open}."
             LOGGER.result(f"[RESULT] FAILED – {summary}")
             result.test_result = "FAILED"
-            logs.append(summary_line)
             logs.append(summary)
             return result
 
@@ -11071,7 +11077,7 @@ def run_youtube_recommended_movie_playback_check(dab_topic, test_name, tester, d
         wait_line = "[WAIT] Waiting 10 seconds for YouTube to launch and start playback."
         LOGGER.result(wait_line)
         logs.append(wait_line)
-        countdown(10, LOGGER)
+        countdown("Waiting for YouTube to start playback", 10)
 
         # --- Step 6: Optional DAB-level state check (applications/get-state) ---
         LOGGER.result("[STEP] (Optional) Checking YouTube app state via applications/get-state.")
@@ -11118,7 +11124,6 @@ def run_youtube_recommended_movie_playback_check(dab_topic, test_name, tester, d
             summary = "Manual verification failed: YouTube did not launch or playback did not start as expected."
             LOGGER.result(f"[RESULT] FAILED – {summary}")
             result.test_result = "FAILED"
-            logs.append(summary_line)
             logs.append(summary)
             return result
 
@@ -11127,7 +11132,7 @@ def run_youtube_recommended_movie_playback_check(dab_topic, test_name, tester, d
             line = "[STEP] Returning to home screen after playback check (best-effort)."
             LOGGER.result(line)
             logs.append(line)
-            return_to_home(tester, device_id, logs)
+            tester.return_to_home_after_test(device_id, logs)
         except Exception as e:
             line = f"[INFO] return_to_home failed: {e}; please ensure device is back on home manually."
             LOGGER.result(line)
@@ -11139,7 +11144,6 @@ def run_youtube_recommended_movie_playback_check(dab_topic, test_name, tester, d
         )
         LOGGER.result(f"[RESULT] PASS – {summary}")
         result.test_result = "PASS"
-        logs.append(summary_line)
         logs.append(summary)
         return result
 

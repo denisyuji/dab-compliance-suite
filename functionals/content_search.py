@@ -153,9 +153,9 @@ def run_content_search_empty_query_behavior_check(dab_topic, test_name, tester, 
 
     Goal:
       - Call content/search with an empty searchText ("").
-      - Acceptable outcomes:
+      - Acceptable outcomes (the spec defines no error for an empty searchText):
           * 400 (Bad Request / invalid parameters) with valid JSON (or empty body), OR
-          * 200 (OK) with valid JSON body where 'entries' is an empty list.
+          * 200 (OK) with valid JSON body where 'entries' is a list (spec 5.10).
       - Treat 501 as OPTIONAL_FAILED (operation not implemented).
       - Any other behavior is FAILED.
     """
@@ -165,9 +165,9 @@ def run_content_search_empty_query_behavior_check(dab_topic, test_name, tester, 
 
     try:
         helpers.log_line(logs, "TEST", f"{test_name} (id={test_id}, device={device_id})", result=result)
-        helpers.log_line(logs, "DESC", "Goal: Verify that content/search with empty searchText returns either 400 with valid JSON or 200 with entries=[].", result=result)
+        helpers.log_line(logs, "DESC", "Goal: Verify that content/search with empty searchText returns either 400 with valid JSON or 200 with an entries list.", result=result)
         helpers.log_line(logs, "DESC", "Required operation: content/search.", result=result)
-        helpers.log_line(logs, "DESC", "PASS if status in {400, 200}. For 400: valid JSON or empty body. For 200: valid JSON with entries=[].", result=result)
+        helpers.log_line(logs, "DESC", "PASS if status in {400, 200}. For 400: valid JSON or empty body. For 200: valid JSON with an entries list.", result=result)
 
         cap_spec = "ops: content/search"
         if not helpers.require_capabilities(tester, device_id, cap_spec, result, logs):
@@ -192,7 +192,7 @@ def run_content_search_empty_query_behavior_check(dab_topic, test_name, tester, 
             if status == 400:
                 helpers.finish(result, logs, "PASS", "content/search returned status=400 with no body for empty searchText; treated as valid client error.")
                 return result
-            helpers.finish(result, logs, "PASS", "content/search returned status=200 with an empty body for empty searchText; treating as allowed empty result set (entries=[]).")
+            helpers.finish(result, logs, "FAILED", "content/search returned status=200 with an empty body; 'entries' is required.")
             return result
 
         try:
@@ -214,11 +214,7 @@ def run_content_search_empty_query_behavior_check(dab_topic, test_name, tester, 
             helpers.finish(result, logs, "FAILED", "For status=200, content/search response does not expose 'entries' as a list for empty searchText.")
             return result
 
-        if len(entries) != 0:
-            helpers.finish(result, logs, "FAILED", f"For status=200, expected entries=[] for empty searchText, but got {len(entries)} entries.")
-            return result
-
-        helpers.finish(result, logs, "PASS", "Empty searchText returned status=200 with valid JSON and entries=[], as allowed behavior.")
+        helpers.finish(result, logs, "PASS", f"Empty searchText returned status=200 with valid JSON and {len(entries)} entries, as allowed behavior.")
 
     except helpers.UnsupportedOperationError as e:
         helpers.finish(result, logs, "OPTIONAL_FAILED", f"Unsupported op: {e.topic}")
