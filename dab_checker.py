@@ -465,6 +465,30 @@ class DabChecker:
             for meta in ("status", "statusText", "ts"):
                 settings_map.pop(meta, None)
 
+            # ---- Keys whose settings/list entry differs from the get/set key ----
+            # screenSaverMinTimeout exists only in settings/list; it is not a
+            # SystemSettings key, so let the device answer (expected 400).
+            if request_key == "screenSaverMinTimeout":
+                return ValidateCode.UNCERTAIN, (
+                    "\n'screenSaverMinTimeout' is a settings/list field, not a settable key; UNCERTAIN.\n"
+                )
+            # screenSaverTimeout is not listed; its support is given by the
+            # screenSaver flag and its lower bound by screenSaverMinTimeout.
+            if request_key == "screenSaverTimeout":
+                if settings_map.get("screenSaver") is not True:
+                    return ValidateCode.UNSUPPORT, (
+                        "\n'screenSaverTimeout' is not supported (screenSaver not advertised in settings/list).\n"
+                    )
+                min_timeout = settings_map.get("screenSaverMinTimeout")
+                if (isinstance(request_value, (int, float)) and not isinstance(request_value, bool)
+                        and isinstance(min_timeout, (int, float)) and request_value < min_timeout):
+                    return ValidateCode.UNCERTAIN, (
+                        f"\n'screenSaverTimeout': provided {request_value} is below screenSaverMinTimeout {min_timeout}. Marking as UNCERTAIN.\n"
+                    )
+                return ValidateCode.SUPPORT, (
+                    f"\n'screenSaverTimeout' supported (screenSaver advertised, min timeout {min_timeout}). Provided {request_value}.\n"
+                )
+
             # ---- MANDATORY KEY VALIDATION ----
             if request_key not in settings_map:
                 sample = list(settings_map.keys())[:3]
@@ -812,21 +836,18 @@ class DabChecker:
         request_body = json.loads(effective_raw)
         (request_key, request_value), = request_body.items()
 
-        # If numeric-range and out-of-range was requested, expect device to clamp to nearest boundary.
+        # An unsupported value must be rejected with 400 (spec 5.3, settings/set),
+        # so a 200 is expected to store exactly the requested value; no clamping.
         expected_value = request_value
         try:
             sup_map = self.__to_settings_map(EnforcementManager().get_supported_settings())
             desc = sup_map.get(request_key)
             if isinstance(desc, dict) and {"min", "max"}.issubset(desc.keys()) and isinstance(request_value, (int, float)):
                 mn, mx = desc["min"], desc["max"]
-                if request_value < mn:
-                    expected_value = mn
-                    self.logger.info(f"[check] '{request_key}' requested {request_value} below min {mn} → expecting clamp to {mn}.")
-                elif request_value > mx:
-                    expected_value = mx
-                    self.logger.info(f"[check] '{request_key}' requested {request_value} above max {mx} → expecting clamp to {mx}.")
+                if not (mn <= request_value <= mx):
+                    self.logger.info(f"[check] '{request_key}' value {request_value} outside [{mn}, {mx}] was accepted with 200; expected 400.")
         except Exception as e:
-            self.logger.warn(f"[check] clamp expectation compute error for '{request_key}': {e}")
+            self.logger.warn(f"[check] range check error for '{request_key}': {e}")
 
         validate_result = False
         actual_value = 'UNKNOWN'
