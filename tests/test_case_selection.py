@@ -1,6 +1,23 @@
 import unittest
 
-from main import case_matches
+import functionals.functional_helpers as helpers
+from main import case_matches, is_manual_test
+
+
+def _automatic_check(tester, device_id):
+    return case_matches("SystemPowerModeSet", "SystemPower*")
+
+
+def _prompting_check(tester, device_id):
+    return helpers.yes_or_no(None, [], "Did it work?")
+
+
+def _indirect_prompting_check(tester, device_id):
+    return _prompting_check(tester, device_id)
+
+
+def _input_check(test_result, durationInMs=0, expectedLatencyMs=0):
+    return input("Did it work? ") == "y"
 
 
 class CaseMatchesTests(unittest.TestCase):
@@ -66,6 +83,23 @@ class CaseMatchesTests(unittest.TestCase):
             if any(case_matches(test_id, pattern) for pattern in requested_cases)
         ]
         self.assertEqual(matched, ["AppLaunchNegativeTest", "InputLongKeyPressKeyDown"])
+
+
+class IsManualTestTests(unittest.TestCase):
+    def test_automatic_functional_case(self):
+        self.assertFalse(is_manual_test(("topic", "functional", _automatic_check, "Auto", "2.1", False)))
+
+    def test_functional_case_with_prompt(self):
+        self.assertTrue(is_manual_test(("topic", "functional", _prompting_check, "Manual", "2.1", False)))
+
+    def test_prompt_reached_through_helper(self):
+        self.assertTrue(is_manual_test(("topic", "functional", _indirect_prompting_check, "Manual", "2.1", False)))
+
+    def test_conformance_case_with_input(self):
+        self.assertTrue(is_manual_test(("topic", "{}", _input_check, 200, "Manual", "2.1", False)))
+
+    def test_conformance_case_without_function(self):
+        self.assertFalse(is_manual_test(("topic", "{}", None, 200, "Auto", "2.1", False)))
 
 
 if __name__ == "__main__":
