@@ -9,6 +9,20 @@ dab_request_schema = {
     "required": []
 }
 
+# Enum values from the DAB 2.1 spec
+APPLICATION_STATES = ["STOPPED", "FOREGROUND", "BACKGROUND"]
+POWER_MODES = ["Active", "Standby", "Deep Sleep"]
+MATCH_CONTENT_FRAME_RATES = ["EnabledAlways", "EnabledSeamlessOnly", "Disabled"]
+HDR_OUTPUT_MODES = ["AlwaysHdr", "HdrOnPlayback", "DisableHdr"]
+PICTURE_MODES = ["Standard", "Dynamic", "Movie", "Sports", "FilmMaker", "Game", "Auto"]
+AUDIO_OUTPUT_MODES = ["Stereo", "MultichannelPcm", "PassThrough", "Auto"]
+# 2.1 renamed Bluetooth to WirelessSpeakers and added USB
+AUDIO_OUTPUT_SOURCES_21 = ["NativeSpeaker", "Arc", "EArc", "Optical", "Aux", "WirelessSpeakers", "Auto", "HDMI"]
+VIDEO_INPUT_SOURCES_21 = ["Tuner", "HDMI1", "HDMI2", "HDMI3", "HDMI4", "Composite", "Component", "USB", "Home", "Cast"]
+CONTENT_CATEGORIES = ["ContinueWatching", "Movies", "TvShows", "LiveEvents", "LinearTv", "Video", "Trending", "Others"]
+NETWORK_INTERFACE_TYPES = ["Ethernet", "Wifi", "Bluetooth", "Coax", "Other"]
+DISPLAY_TYPES = ["Native", "External"]
+
 # DabResponse
 dab_response_schema = {
     "type": "object",
@@ -31,7 +45,9 @@ list_supported_operation_response_schema = {
         "error": {"type": "string"},
         "operations": {
             "type": "array",
-            "items": {"type": "string"}
+            "items": {"type": "string"},
+            # The result must not include operations/list itself (spec 5.1)
+            "not": {"contains": {"const": "operations/list"}}
         }
     },
     "required": ["status", "operations"]
@@ -117,7 +133,7 @@ get_application_state_response_schema = {
     "properties": {
         "status": {"type": "integer"},
         "error": {"type": "string"},
-        "state": {"type": "string"}
+        "state": {"type": "string", "enum": APPLICATION_STATES}
     },
     "required": ["status", "state"]
 }
@@ -139,7 +155,7 @@ exit_application_response_schema = {
     "properties": {
         "status": {"type": "integer"},
         "error": {"type": "string"},
-        "state": {"type": "string"}
+        "state": {"type": "string", "enum": APPLICATION_STATES}
     },
     "required": ["status", "state"]
 }
@@ -148,9 +164,11 @@ install_application_request_schema = {
     "type": "object",
     "properties": {
         "appId": {"type": "string"},
-        "force": {"type": "boolean"}
+        "url": {"type": "string"},
+        "format": {"type": "string"},
+        "timeout": {"type": "number"}  # seconds
     },
-    "required": ["appId"]
+    "required": ["appId", "url"]
 }
 # InstallApplicationResponse
 install_application_response_schema = {
@@ -168,8 +186,7 @@ install_application_response_schema = {
 uninstall_application_request_schema = {
     "type": "object",
     "properties": {
-        "appId": {"type": "string"},
-        "force": {"type": "boolean"}
+        "appId": {"type": "string"}
     },
     "required": ["appId"]
 }
@@ -188,8 +205,7 @@ uninstall_application_response_schema = {
 clear_data_application_request_schema = {
     "type": "object",
     "properties": {
-        "appId": {"type": "string"},
-        "force": {"type": "boolean"}
+        "appId": {"type": "string"}
     },
     "required": ["appId"]
 }
@@ -209,7 +225,7 @@ install_from_appstore_application_request_schema = {
     "type": "object",
     "properties": {
         "appId": {"type": "string"},
-        "force": {"type": "boolean"}
+        "appStoreId": {"type": "string"}
     },
     "required": ["appId"]
 }
@@ -243,7 +259,7 @@ network_interface_schema = {
             "type": ["array", "null"],
             "items": {"type": "string"}
         },
-        "type": {"type": "string"}
+        "type": {"type": "string", "enum": NETWORK_INTERFACE_TYPES}
     },
     "required": ["connected", "macAddress", "type"]
 }
@@ -264,15 +280,15 @@ device_information_schema = {
             "type": "array",
             "items": network_interface_schema
         },
-        "displayType": {"type": "string"},
+        "displayType": {"type": "string", "enum": DISPLAY_TYPES},
         "screenWidthPixels": {"type": "integer"},
         "screenHeightPixels": {"type": "integer"},
-        "uptimeSince": {"type": ["string", "integer"]},
+        "uptimeSince": {"type": "integer"},  # unix_timestamp_ms
         "deviceId": {"type": "string"}
     },
     "required": ["status", "manufacturer", "model", "serialNumber", "chipset", 
-                 "firmwareVersion", "firmwareBuild", "networkInterfaces", "displayType", 
-                 "screenWidthPixels", "screenHeightPixels", "uptimeSince", "deviceId"]
+                 "firmwareVersion", "firmwareBuild", "networkInterfaces", "displayType",
+                 "uptimeSince", "deviceId"]  # screen size is absent when no screen is attached
 }
 
 # Operation: system/restart
@@ -317,19 +333,19 @@ list_system_settings_schema = {
         "lowLatencyMode": {"type": "boolean"},
         "matchContentFrameRate": {
             "type": "array",
-            "items": {"type": "string"}
+            "items": {"type": "string", "enum": MATCH_CONTENT_FRAME_RATES}
         },
         "hdrOutputMode": {
             "type": "array",
-            "items": {"type": "string"}
+            "items": {"type": "string", "enum": HDR_OUTPUT_MODES}
         },
         "pictureMode": {
             "type": "array",
-            "items": {"type": "string"}
+            "items": {"type": "string", "enum": PICTURE_MODES}
         },
         "audioOutputMode": {
             "type": "array",
-            "items": {"type": "string"}
+            "items": {"type": "string", "enum": AUDIO_OUTPUT_MODES}
         },
         "audioOutputSource": {
             "type": "array",
@@ -378,12 +394,23 @@ list_system_settings_schema_21 = {
             },
             "required": ["min", "max"]
         },
-        "timeZone": {"type": "boolean"},
+        "timeZone": {
+            "type": "array",
+            "items": {"type": "string"}
+        },
         "screenSaver": {"type": "boolean"},
-        "screenSaverMinTimeout": {"type": "integer"},
+        "screenSaverMinTimeout": {"type": "integer", "maximum": 60},
         "personalizedAds": {"type": "boolean"},
         "highContrastText": {"type": "boolean"},
         "identifierForAdvertising": {"type": "boolean"},
+        "audioOutputSource": {
+            "type": "array",
+            "items": {"type": "string", "enum": AUDIO_OUTPUT_SOURCES_21}
+        },
+        "videoInputSource": {
+            "type": "array",
+            "items": {"type": "string", "enum": VIDEO_INPUT_SOURCES_21}
+        },
     },
     "required": ["status", "language", "outputResolution", "memc", "cec", "lowLatencyMode",
                  "matchContentFrameRate", "hdrOutputMode", "pictureMode", "audioOutputMode",
@@ -399,10 +426,10 @@ system_settings_schema = {
     "memc": {"type": "boolean"},
     "cec": {"type": "boolean"},
     "lowLatencyMode": {"type": "boolean"},
-    "matchContentFrameRate": {"type": "string"},
-    "hdrOutputMode": {"type": "string"},
-    "pictureMode": {"type": "string"},
-    "audioOutputMode": {"type": "string"},
+    "matchContentFrameRate": {"type": "string", "enum": MATCH_CONTENT_FRAME_RATES},
+    "hdrOutputMode": {"type": "string", "enum": HDR_OUTPUT_MODES},
+    "pictureMode": {"type": "string", "enum": PICTURE_MODES},
+    "audioOutputMode": {"type": "string", "enum": AUDIO_OUTPUT_MODES},
     "audioOutputSource": {"type": "string"},
     "videoInputSource": {"type": "string"},
     "audioVolume": {"type": "integer"},
@@ -413,10 +440,18 @@ system_settings_schema = {
     "timeZone": {"type": "string"},
     "screenSaver": {"type": "boolean"},
     "screenSaverTimeout": {"type": "integer"},
-    "screenSaverMinTimeout": {"type": "integer"},
     "personalizedAds": {"type": "boolean"},
     "highContrastText": {"type": "boolean"},
     "identifierForAdvertising": {"type": "string"},
+}
+
+# 2.1 enum values for get/set (2.0 still had Bluetooth and no USB)
+system_settings_sources_schema_21 = {
+    "type": "object",
+    "properties": {
+        "audioOutputSource": {"type": "string", "enum": AUDIO_OUTPUT_SOURCES_21},
+        "videoInputSource": {"type": "string", "enum": VIDEO_INPUT_SOURCES_21},
+    }
 }
 
 # Operation: system/settings/get
@@ -792,7 +827,8 @@ version_response_schema = {
         "versions": {
             "type": "array",
             "items": {
-                "type": "string"
+                "type": "string",
+                "pattern": "^[0-9]+\\.[0-9]+$"
             }
         },
     },
@@ -837,7 +873,7 @@ power_mode_get_response_schema = {
     "properties": {
         "status": {"type": "integer"},
         "error": {"type": "string"},
-        "powerMode": {"type": "string"}
+        "powerMode": {"type": "string", "enum": POWER_MODES}
     },
     "required": ["status", "powerMode"]
 }
@@ -847,7 +883,7 @@ power_mode_get_response_schema = {
 power_mode_set_request_schema = {
     "type": "object",
     "properties": {
-        "powerMode": {"type": "string"}
+        "powerMode": {"type": "string", "enum": POWER_MODES}
     },
     "required": ["powerMode"]
 }
@@ -858,7 +894,7 @@ power_mode_set_response_schema = {
     "properties": {
         "status": {"type": "integer"},
         "error": {"type": "string"},
-        "powerMode": {"type": "string"}
+        "powerMode": {"type": "string", "enum": POWER_MODES}
     },
     "required": ["status", "powerMode"]
 }
@@ -889,10 +925,11 @@ content_entries_schema = {
                     "entryId": {"type": "string"},
                     "title": {"type": "string"},
                     "appId": {"type": "string"},
-                    "poster": {"type": "string"},
+                    # Base64 PNG in a data URL
+                    "poster": {"type": "string", "pattern": "^data:image/png;base64,"},
                     "categories": {
                         "type": "array",
-                        "items": {"type": "string"}
+                        "items": {"type": "string", "enum": CONTENT_CATEGORIES}
                     }
                 },
                 "required": ["entryId", "title", "appId", "poster", "categories"]
@@ -987,10 +1024,14 @@ class dab_response_validator(object):
     @staticmethod
     def validate_get_system_settings_response_schema(response):
         validate(instance=jsons.loads(response), schema=get_system_settings_response_schema)
+        if (dab_tester.DAB_VERSION or "2.0") == "2.1":
+            validate(instance=jsons.loads(response), schema=system_settings_sources_schema_21)
 
     @staticmethod
     def validate_set_system_settings_response_schema(response):
         validate(instance=jsons.loads(response), schema=set_system_settings_response_schema)
+        if (dab_tester.DAB_VERSION or "2.0") == "2.1":
+            validate(instance=jsons.loads(response), schema=system_settings_sources_schema_21)
 
     @staticmethod
     def validate_key_list_schema(response):
