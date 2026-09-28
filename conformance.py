@@ -55,7 +55,7 @@ CONFORMANCE_TEST_CASE = [
     ("system/settings/set",'{"audioOutputSource": "invalid"}', dab.system.settings_set, 3000, "audioOutputSource Bad Request", "2.0", True),
     ("system/settings/set",'{"videoInputSource": "HDMI1"}', dab.system.settings_set, 3000, "videoInputSource", "2.0", False),
     ("system/settings/set",'{"videoInputSource": "invalid"}', dab.system.settings_set, 3000, "videoInputSource Bad Request", "2.0", True),
-    ("system/settings/set"x'x','{"audioVolume": 10}', dab.system.settings_set, 3000, "audioVolume", "2.0", False),
+    ("system/settings/set",'{"audioVolume": 10}', dab.system.settings_set, 3000, "audioVolume", "2.0", False),
     ("system/settings/set",'{"audioVolume": 120}', dab.system.settings_set, 3000, "audioVolume - Negative Test", "2.0", True),
     ("system/settings/set",'{"audioVolume": true}', dab.system.settings_set, 3000, "audioVolume bad request", "2.0", True),
     ("system/settings/set",'{"mute": false}', dab.system.settings_set, 3000, "mute", "2.0", False),
