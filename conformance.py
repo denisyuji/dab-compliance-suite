@@ -17,6 +17,7 @@ from util.config_loader import ensure_app_available, build_install_from_app_stor
 # Implement the test cases for conformance test.
 CONFORMANCE_TEST_CASE = [
     ("operations/list",'{}', dab.operations.list, 200, "Conformance", "2.0", False),
+    ("system/network-reset", '{}', dab.system.network_reset, 200, "Conformance", "2.1", False),
     ("applications/list",'{}', dab.applications.list, 250, "Conformance", "2.0", False),
     ("applications/launch",lambda: f'{{"appId": "{config.apps["youtube"]}"}}', dab.applications.launch, 10000, "Conformance", "2.0", False),
     ("applications/launch",f'{{"appId_": "{config.apps["youtube"]}"}}', dab.applications.launch, 10000, "Conformance Bad Request 1", "2.0", True),
@@ -54,7 +55,7 @@ CONFORMANCE_TEST_CASE = [
     ("system/settings/set",'{"audioOutputSource": "invalid"}', dab.system.settings_set, 3000, "audioOutputSource Bad Request", "2.0", True),
     ("system/settings/set",'{"videoInputSource": "HDMI1"}', dab.system.settings_set, 3000, "videoInputSource", "2.0", False),
     ("system/settings/set",'{"videoInputSource": "invalid"}', dab.system.settings_set, 3000, "videoInputSource Bad Request", "2.0", True),
-    ("system/settings/set",'{"audioVolume": 10}', dab.system.settings_set, 3000, "audioVolume", "2.0", False),
+    ("system/settings/set"x'x','{"audioVolume": 10}', dab.system.settings_set, 3000, "audioVolume", "2.0", False),
     ("system/settings/set",'{"audioVolume": 120}', dab.system.settings_set, 3000, "audioVolume - Negative Test", "2.0", True),
     ("system/settings/set",'{"audioVolume": true}', dab.system.settings_set, 3000, "audioVolume bad request", "2.0", True),
     ("system/settings/set",'{"mute": false}', dab.system.settings_set, 3000, "mute", "2.0", False),
