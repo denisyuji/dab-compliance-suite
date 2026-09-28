@@ -1,4 +1,4 @@
-from time import sleep
+from time import sleep, monotonic
 from threading import Lock
 from paho.mqtt.properties import Properties
 from paho.mqtt.packettypes import PacketTypes 
@@ -22,7 +22,9 @@ class DabClient:
 
     def __on_message(self, client, userdata, message):
         self.__response_dic = json.loads(message.payload)
-        self.__response_chunks.append(self.__response_dic)
+        # Keep the arrival time, so multi-response operations can check the
+        # interval between responses (e.g. log chunks, at most 2 s apart).
+        self.__response_chunks.append((self.__response_dic, monotonic()))
         if self.__lock.locked():
             self.__lock.release()
         try:
@@ -31,7 +33,8 @@ class DabClient:
             self.__code = -1
 
     def get_response_chunk(self):
-        return self.__response_chunks.pop(0) if self.__response_chunks else None
+        # Returns (response, arrival time in time.monotonic() seconds).
+        return self.__response_chunks.pop(0) if self.__response_chunks else (None, None)
 
     def __on_message_metrics(self, client, userdata, message):
         if not message.payload:
