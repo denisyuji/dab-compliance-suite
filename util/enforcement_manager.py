@@ -38,6 +38,7 @@ class ValidateCode(Enum):
 LOGS_COLLECTION_CATEGORIES = {"system", "application", "crash"}
 LOGS_COLLECTION_FOLDER = "logs"
 LOGS_COLLECTION_PACKAGE = f"{LOGS_COLLECTION_FOLDER}.tar.gz"
+LOGS_CHUNK_MAX_INTERVAL = 2  # Max seconds between two log chunk responses (spec 5.3)
 
 @singleton
 class EnforcementManager:
@@ -156,12 +157,13 @@ class EnforcementManager:
 
     def verify_logs_chunk(self, tester, logs):
         previous_remainingChunks = -1
+        previous_received_at = None
         all_logArchives = bytearray()
         validate_state = True
 
         startTime = time.time()
         while True:
-            chunkData = tester.dab_client.get_response_chunk()
+            chunkData, received_at = tester.dab_client.get_response_chunk()
             currentTime = time.time()
             if not chunkData:
                 if currentTime - startTime > 90:
@@ -180,6 +182,13 @@ class EnforcementManager:
                 logs.append(f"[FAILED] Lost the logs chunk with 'remainingChunks':{previous_remainingChunks - 1}.")
                 break
             if remainingChunks != previous_remainingChunks:
+                if previous_received_at is not None and received_at - previous_received_at > LOGS_CHUNK_MAX_INTERVAL:
+                    validate_state = False
+                    interval = received_at - previous_received_at
+                    print(f"Logs chunk with 'remainingChunks':{remainingChunks} arrived {interval:.2f}s after the previous one (max {LOGS_CHUNK_MAX_INTERVAL}s).")
+                    logs.append(f"[FAILED] Logs chunk with 'remainingChunks':{remainingChunks} arrived {interval:.2f}s after the previous one (max {LOGS_CHUNK_MAX_INTERVAL}s).")
+                    break
+                previous_received_at = received_at
                 print(chunkData)
                 all_logArchives.extend(base64.b64decode(chunkData["logArchive"]))
                 logs.append(json.dumps(chunkData))
