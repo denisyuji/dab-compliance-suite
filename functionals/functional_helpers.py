@@ -196,14 +196,22 @@ def execute_cmd_and_log(tester, device_id, topic, payload, logs=None, result=Non
     # A timeout must not look like an error status, or negative checks such
     # as "status != 200" would pass a device that never answers.
     if not resp:
-        line = f"[FAILED] No response received for '{topic}'."
+        # DabClient.response() is also empty for a payload without status;
+        # only code 100 is a timeout.
+        timed_out = tester.dab_client.last_error_code() == 100
+        if timed_out:
+            line = f"[FAILED] No response received for '{topic}'."
+        else:
+            line = f"[FAILED] Response for '{topic}' has no status."
         LOGGER.warn(line)
         if logs is not None: logs.append(line)
         if result is not None:
             result.test_result = "FAILED"
             # Tests often turn exceptions into SKIPPED; the runner restores FAILED
             result.no_response = True
-        raise NoResponseError(topic)
+        if timed_out:
+            raise NoResponseError(topic)
+        raise InvalidResponseError(topic)
 
     # Log
     resp_line = f"[{topic}] Response: {resp_json}"
