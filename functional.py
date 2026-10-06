@@ -10335,8 +10335,9 @@ def run_timezone_case_insensitive_america_los_angeles_check(dab_topic, test_name
         if set_status == 400:
             after_status, after_body = execute_cmd_and_log(tester, device_id, "system/settings/get", "{}", logs, result)
             current_tz = json.loads(after_body).get("timeZone") if after_status == 200 else None
-            if current_tz != original_tz:
-                summary = f"lower-case timeZone was rejected with 400, but timeZone changed from {original_tz!r} to {current_tz!r}."
+            # A missing timeZone on both reads must not count as unchanged
+            if not isinstance(current_tz, str) or current_tz != original_tz:
+                summary = f"lower-case timeZone was rejected with 400, but timeZone is not confirmed unchanged (before {original_tz!r}, after {current_tz!r})."
                 LOGGER.result(f"[RESULT] FAILED – {summary}")
                 result.test_result = "FAILED"
                 logs.append(summary)
