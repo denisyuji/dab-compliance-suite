@@ -238,6 +238,7 @@ The DAB Compliance Test Tool supports running tests in different ways:
 
   How It Works:
   - If `-o <file>` is provided, the tool writes results to that file in JSON format.
+  - When `-c` selects tests from more than one suite, that file holds the results of all of them.
 
   5. If `-o` is NOT provided:
 

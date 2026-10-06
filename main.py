@@ -215,6 +215,18 @@ if __name__ == "__main__":
         "functional": functional.FUNCTIONAL_TEST_CASE,
     }
 
+    requested_cases = [
+        c.strip()
+        for case_arg in (args.case or [])
+        for c in case_arg.split(",")
+        if c.strip()
+    ]
+
+    # An empty selection such as -c ',' must not fall back to running every test.
+    if args.case and not requested_cases:
+        LOGGER.error("-c/--case was given without any test ID or pattern.")
+        sys.exit(2)
+
     Tester = DabTester(args.broker, override_dab_version=args.dab_version)
 
     Tester.verbose = args.verbose
@@ -244,13 +256,6 @@ if __name__ == "__main__":
             f"{'Only manual' if args.manual_only else 'Skipping manual'} test cases: "
             f"{sum(len(test_cases) for test_cases in suite_to_run.values())} test(s) selected."
         )
-
-    requested_cases = [
-        c.strip()
-        for case_arg in (args.case or [])
-        for c in case_arg.split(",")
-        if c.strip()
-    ]
 
     if (args.list == True):
         for suite in suite_to_run:
@@ -285,6 +290,7 @@ if __name__ == "__main__":
             # Handle single or multiple cases passed via -c
             LOGGER.info(f"Requested case IDs: {requested_cases}")
             matched_count = 0
+            matched_suites = []
             selected_results = []
             for suite in suite_to_run:
                 LOGGER.info(f"Searching for requested cases in suite '{suite}'...")
@@ -299,6 +305,7 @@ if __name__ == "__main__":
                 if matched_tests:
                     LOGGER.result(f"Matched {len(matched_tests)} case(s) in suite '{suite}'.")
                     matched_count += len(matched_tests)
+                    matched_suites.append(suite)
                     Tester.assert_device_available(device_id)
                     Tester.Execute_Single_Test(
                         suite,
@@ -311,6 +318,16 @@ if __name__ == "__main__":
             if matched_count == 0:
                 LOGGER.error(f"None of the requested test case IDs matched: {requested_cases}")
             else:
+                if args.output and len(matched_suites) > 1:
+                    # Each suite wrote its own results to args.output, so only the
+                    # last one is left there. Write the combined results once.
+                    Tester.write_test_result_json(
+                        "+".join(matched_suites),
+                        selected_results,
+                        args.output,
+                        device_info=Tester.get_device_info(device_id),
+                        emit_summary=False,
+                    )
                 outcomes = [
                     getattr(result, "test_result", None)
                     or getattr(result, "outcome", None)
@@ -323,6 +340,10 @@ if __name__ == "__main__":
                 LOGGER.result(f"  FAIL          : {outcomes.count('FAILED')}")
                 LOGGER.result(f"  OPTIONAL_FAIL : {outcomes.count('OPTIONAL_FAILED')}")
                 LOGGER.result(f"  SKIPPED       : {outcomes.count('SKIPPED')}")
+                # A run stopped during preflight leaves matched tests without a result.
+                not_run = matched_count - len(selected_results)
+                if not_run > 0:
+                    LOGGER.result(f"  NOT RUN       : {not_run}")
                 LOGGER.result("Results by test:")
                 for result in selected_results:
                     outcome = (
@@ -332,7 +353,7 @@ if __name__ == "__main__":
                     )
                     LOGGER.result(f"  {outcome:<16} {getattr(result, 'test_id', '<unknown>')}")
                 LOGGER.result(
-                    f"Overall Passed  : {'YES' if not any(outcome in {'FAILED', 'SKIPPED'} for outcome in outcomes) else 'NO'}"
+                    f"Overall Passed  : {'YES' if not_run <= 0 and not any(outcome in {'FAILED', 'SKIPPED'} for outcome in outcomes) else 'NO'}"
                 )
 
     Tester.Close()
