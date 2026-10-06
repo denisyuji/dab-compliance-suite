@@ -26,6 +26,11 @@ class NoResponseError(Exception):
         self.topic = topic
         super().__init__(f"No response received for DAB operation '{topic}'.")
 
+class InvalidResponseError(Exception):
+    def __init__(self, topic):
+        self.topic = topic
+        super().__init__(f"Response for DAB operation '{topic}' has no status.")
+
 # === Capability-gate helpers (non-breaking additions) =========================
 def _split_items(s: str):
     return [x.strip() for x in s.split(",") if x and x.strip()]
@@ -205,13 +210,17 @@ def execute_cmd_and_log(tester, device_id, topic, payload, logs=None, result=Non
     LOGGER.info(resp_line)
     if logs is not None: logs.append(resp_line)
 
-    # Normalize status code (never None)
+    # A response without status must not look like an error status either:
+    # a default such as 500 would also satisfy "status != 200".
     status_code = dab_status_from(resp_json, rc)
     if status_code is None:
-        status_code = 500
-        warn = f"[WARN] No status code found for '{topic}'; defaulting to 500."
-        LOGGER.warn(warn)
-        if logs is not None: logs.append(warn)
+        line = f"[FAILED] Response for '{topic}' has no status."
+        LOGGER.warn(line)
+        if logs is not None: logs.append(line)
+        if result is not None:
+            result.test_result = "FAILED"
+            result.no_response = True
+        raise InvalidResponseError(topic)
 
     status_line = f"[{topic}] Status: {status_code}"
     LOGGER.info(status_line)
