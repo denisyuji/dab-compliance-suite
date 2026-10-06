@@ -7618,6 +7618,12 @@ def run_power_mode_get_standby_verify(dab_topic, test_name, tester, device_id):
                 original_mode = None
         line = f"[INFO] Original power mode: {original_mode!r}"
         LOGGER.result(line); logs.append(line)
+        if original_mode is None:
+            # Without it the device could not be restored after the test.
+            result.test_result = "SKIPPED"
+            line = f"[RESULT] SKIPPED — precondition failed: could not read the current power mode (status={pre_status}, response={pre_resp})."
+            LOGGER.result(line); logs.append(line)
+            return result
 
         line = "[STEP] Precondition: setting power mode to 'Standby' via system/power-mode/set."
         LOGGER.result(line); logs.append(line)
@@ -7914,8 +7920,8 @@ def run_power_mode_get_adaptive_support_check(dab_topic, test_name, tester, devi
         # Support path
         if validate_code == ValidateCode.SUPPORT:
             if status == 200 and json_ok and isinstance(obj, dict):
-                mode_val = str(obj.get("powerMode", "UNKNOWN"))
-                if mode_val and mode_val != "UNKNOWN":
+                mode_val = obj.get("powerMode")
+                if isinstance(mode_val, str) and mode_val and mode_val != "UNKNOWN":
                     result.test_result = "PASS"
                     line = f"[RESULT] PASS — supported: status=200 with mode='{mode_val}'."
                     LOGGER.result(line); logs.append(line)
@@ -9605,18 +9611,35 @@ def run_power_mode_active_to_standby_check(dab_topic, test_name, tester, device_
         logs.append(LOGGER.stamp(summary))
         return result
 
-    # STEP 2: Set power mode to "Standby"
     try:
-        LOGGER.result("[STEP] Setting power-mode to 'Standby'.")
-        logs.append(LOGGER.stamp("[STEP] Setting power-mode to 'Standby'."))
+        # STEP 2: Set power mode to "Standby"
+        try:
+            LOGGER.result("[STEP] Setting power-mode to 'Standby'.")
+            logs.append(LOGGER.stamp("[STEP] Setting power-mode to 'Standby'."))
 
-        payload_standby = json.dumps({"powerMode": "Standby"})
-        status2, _ = execute_cmd_and_log(tester, device_id, "system/power-mode/set", payload_standby, logs, result)
-        if status2 != 200:
-            msg = f"[FAILED] Could not set power mode to 'Standby'. Status={status2}"
+            payload_standby = json.dumps({"powerMode": "Standby"})
+            status2, _ = execute_cmd_and_log(tester, device_id, "system/power-mode/set", payload_standby, logs, result)
+            if status2 != 200:
+                msg = f"[FAILED] Could not set power mode to 'Standby'. Status={status2}"
+                LOGGER.error(msg)
+                logs.append(LOGGER.stamp(msg))
+                result.test_result = "FAILED"
+
+                summary = (
+                    f"[SUMMARY] Power Mode Transition Active→Standby + DAB Liveness — final result: "
+                    f"{result.test_result}, test_id={test_id}, device={device_id}"
+                )
+                LOGGER.result(summary)
+                logs.append(LOGGER.stamp(summary))
+                return result
+
+            logs.append(LOGGER.stamp("[STEP] Set power-mode to 'Standby' — Success."))
+
+        except Exception as ex:
+            msg = f"[SKIPPED] Exception during set to Standby: {ex}"
             LOGGER.error(msg)
             logs.append(LOGGER.stamp(msg))
-            result.test_result = "FAILED"
+            result.test_result = "SKIPPED"
 
             summary = (
                 f"[SUMMARY] Power Mode Transition Active→Standby + DAB Liveness — final result: "
@@ -9626,107 +9649,103 @@ def run_power_mode_active_to_standby_check(dab_topic, test_name, tester, device_
             logs.append(LOGGER.stamp(summary))
             return result
 
-        logs.append(LOGGER.stamp("[STEP] Set power-mode to 'Standby' — Success."))
-
-    except Exception as ex:
-        msg = f"[SKIPPED] Exception during set to Standby: {ex}"
-        LOGGER.error(msg)
-        logs.append(LOGGER.stamp(msg))
-        result.test_result = "SKIPPED"
-
-        summary = (
-            f"[SUMMARY] Power Mode Transition Active→Standby + DAB Liveness — final result: "
-            f"{result.test_result}, test_id={test_id}, device={device_id}"
-        )
-        LOGGER.result(summary)
-        logs.append(LOGGER.stamp(summary))
-        return result
-
-    # STEP 3: Confirm mode is now "Standby"
-    try:
-        LOGGER.result("[STEP] Confirming power-mode is now 'Standby'.")
-        logs.append(LOGGER.stamp("[STEP] Confirming power-mode is now 'Standby'."))
-
-        _, resp3 = execute_cmd_and_log(tester, device_id, "system/power-mode/get", "{}", logs, result)
+        # STEP 3: Confirm mode is now "Standby"
         try:
-            parsed = json.loads(resp3) if isinstance(resp3, str) else resp3
-            after_mode = parsed.get("powerMode")
-        except Exception:
-            after_mode = None
+            LOGGER.result("[STEP] Confirming power-mode is now 'Standby'.")
+            logs.append(LOGGER.stamp("[STEP] Confirming power-mode is now 'Standby'."))
 
-        if after_mode != "Standby":
-            msg = f"[FAILED] Power mode did not become 'Standby'. Actual: {after_mode}"
+            _, resp3 = execute_cmd_and_log(tester, device_id, "system/power-mode/get", "{}", logs, result)
+            try:
+                parsed = json.loads(resp3) if isinstance(resp3, str) else resp3
+                after_mode = parsed.get("powerMode")
+            except Exception:
+                after_mode = None
+
+            if after_mode != "Standby":
+                msg = f"[FAILED] Power mode did not become 'Standby'. Actual: {after_mode}"
+                LOGGER.error(msg)
+                logs.append(LOGGER.stamp(msg))
+                result.test_result = "FAILED"
+
+                summary = (
+                    f"[SUMMARY] Power Mode Transition Active → Standby + DAB Liveness — final result: "
+                    f"{result.test_result}, test_id={test_id}, device={device_id}"
+                )
+                LOGGER.result(summary)
+                logs.append(LOGGER.stamp(summary))
+                return result
+
+            logs.append(LOGGER.stamp("[STEP] Confirmed power-mode is now 'Standby'."))
+
+        except Exception as ex:
+            msg = f"[SKIPPED] Exception during get after Standby: {ex}"
             LOGGER.error(msg)
             logs.append(LOGGER.stamp(msg))
-            result.test_result = "FAILED"
+            result.test_result = "SKIPPED"
 
             summary = (
-                f"[SUMMARY] Power Mode Transition Active → Standby + DAB Liveness — final result: "
+                f"[SUMMARY] Power Mode Transition Active→Standby + DAB Liveness — final result: "
                 f"{result.test_result}, test_id={test_id}, device={device_id}"
             )
             LOGGER.result(summary)
             logs.append(LOGGER.stamp(summary))
             return result
 
-        logs.append(LOGGER.stamp("[STEP] Confirmed power-mode is now 'Standby'."))
+        # STEP 4: Confirm DAB liveness by device/info
+        try:
+            LOGGER.result("[STEP] Checking DAB liveness via device/info.")
+            logs.append(LOGGER.stamp("[STEP] Checking DAB liveness via device/info."))
 
-    except Exception as ex:
-        msg = f"[SKIPPED] Exception during get after Standby: {ex}"
-        LOGGER.error(msg)
-        logs.append(LOGGER.stamp(msg))
-        result.test_result = "SKIPPED"
+            dab_status, resp4 = execute_cmd_and_log(
+                tester, device_id, "device/info", "{}", logs, result
+            )
+            if dab_status == 200:
+                msg = "[PASS] DAB subsystem responded to device/info after Standby. DAB is alive."
+                LOGGER.result(msg)
+                logs.append(LOGGER.stamp(msg))
+                if result.test_result == "UNKNOWN":
+                    result.test_result = "PASS"
+            else:
+                msg = f"[FAILED] DAB subsystem did not respond with 200 after Standby. Status={dab_status}"
+                LOGGER.error(msg)
+                logs.append(LOGGER.stamp(msg))
+                result.test_result = "FAILED"
 
-        summary = (
-            f"[SUMMARY] Power Mode Transition Active→Standby + DAB Liveness — final result: "
-            f"{result.test_result}, test_id={test_id}, device={device_id}"
-        )
-        LOGGER.result(summary)
-        logs.append(LOGGER.stamp(summary))
-        return result
-
-    # STEP 4: Confirm DAB liveness by device/info
-    try:
-        LOGGER.result("[STEP] Checking DAB liveness via device/info.")
-        logs.append(LOGGER.stamp("[STEP] Checking DAB liveness via device/info."))
-
-        dab_status, resp4 = execute_cmd_and_log(
-            tester, device_id, "device/info", "{}", logs, result
-        )
-        if dab_status == 200:
-            msg = "[PASS] DAB subsystem responded to device/info after Standby. DAB is alive."
-            LOGGER.result(msg)
-            logs.append(LOGGER.stamp(msg))
-            if result.test_result == "UNKNOWN":
-                result.test_result = "PASS"
-        else:
-            msg = f"[FAILED] DAB subsystem did not respond with 200 after Standby. Status={dab_status}"
+        except Exception as ex:
+            msg = f"[SKIPPED] Exception during DAB liveness check: {ex}"
             LOGGER.error(msg)
             logs.append(LOGGER.stamp(msg))
-            result.test_result = "FAILED"
+            result.test_result = "SKIPPED"
 
-    except Exception as ex:
-        msg = f"[SKIPPED] Exception during DAB liveness check: {ex}"
-        LOGGER.error(msg)
-        logs.append(LOGGER.stamp(msg))
-        result.test_result = "SKIPPED"
+            summary = (
+                f"[SUMMARY] Power Mode Transition Active→Standby + DAB Liveness — final result: "
+                f"{result.test_result}, test_id={test_id}, device={device_id}"
+            )
+            LOGGER.result(summary)
+            logs.append(LOGGER.stamp(summary))
+            return result
 
+        # FINAL SUMMARY
         summary = (
             f"[SUMMARY] Power Mode Transition Active→Standby + DAB Liveness — final result: "
             f"{result.test_result}, test_id={test_id}, device={device_id}"
         )
         LOGGER.result(summary)
         logs.append(LOGGER.stamp(summary))
+
         return result
-
-    # FINAL SUMMARY
-    summary = (
-        f"[SUMMARY] Power Mode Transition Active→Standby + DAB Liveness — final result: "
-        f"{result.test_result}, test_id={test_id}, device={device_id}"
-    )
-    LOGGER.result(summary)
-    logs.append(LOGGER.stamp(summary))
-
-    return result
+    finally:
+        # The device was Active before this test and later tests expect it back.
+        try:
+            LOGGER.result("[STEP] Restoring power-mode to 'Active'.")
+            logs.append(LOGGER.stamp("[STEP] Restoring power-mode to 'Active'."))
+            execute_cmd_and_log(
+                tester, device_id, "system/power-mode/set", json.dumps({"powerMode": "Active"}), logs, None
+            )
+        except Exception as ex:
+            msg = f"[WARN] Could not restore power-mode to 'Active': {ex}"
+            LOGGER.warn(msg)
+            logs.append(LOGGER.stamp(msg))
 
 # === Test: Voice Multi-Language Alignment Check (voice/send-audio) ===
 def run_voice_multilanguage_language_alignment_check(dab_topic, test_name, tester, device_id):
