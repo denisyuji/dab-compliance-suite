@@ -1,5 +1,6 @@
 import sys 
 import config
+import json
 import os
 from dab_tester import DabTester
 from dab_tester import Default_Validations
@@ -230,6 +231,8 @@ if __name__ == "__main__":
     Tester = DabTester(args.broker, override_dab_version=args.dab_version)
 
     Tester.verbose = args.verbose
+    # --skip-manual is meant for unattended runs, so preflight must not prompt either
+    Tester.interactive_preflight = not args.skip_manual
     try:
         Tester.logger.verbose = Tester.verbose
     except Exception:
@@ -285,12 +288,16 @@ if __name__ == "__main__":
                 LOGGER.info(f"Preparing to run suite '{suite}' with {len(suite_to_run[suite])} tests.")
                 Tester.assert_device_available(device_id)
                 Tester.Execute_All_Tests(suite, device_id, suite_to_run[suite], args.output)
+                if Tester.preflight_terminated:
+                    LOGGER.warn("Run terminated during preflight. Remaining suites are not run.")
+                    break
                 LOGGER.ok(f"Completed suite '{suite}'.")
         else:
             # Handle single or multiple cases passed via -c
             LOGGER.info(f"Requested case IDs: {requested_cases}")
             matched_count = 0
             matched_suites = []
+            suite_reports = []
             selected_results = []
             for suite in suite_to_run:
                 LOGGER.info(f"Searching for requested cases in suite '{suite}'...")
@@ -315,19 +322,39 @@ if __name__ == "__main__":
                         emit_summary=False,
                     )
                     selected_results.extend(Tester.last_valid_results)
+                    if args.output:
+                        # Keep what this suite wrote; the next suite overwrites the file
+                        try:
+                            with open(args.output, "r", encoding="utf-8") as f:
+                                suite_reports.append(json.load(f))
+                        except (OSError, ValueError) as e:
+                            LOGGER.warn(f"Could not read back the results of suite '{suite}': {e}")
+                    if Tester.preflight_terminated:
+                        LOGGER.warn("Run terminated during preflight. Remaining suites are not run.")
+                        break
             if matched_count == 0:
                 LOGGER.error(f"None of the requested test case IDs matched: {requested_cases}")
             else:
-                if args.output and len(matched_suites) > 1:
+                if len(suite_reports) > 1:
                     # Each suite wrote its own results to args.output, so only the
-                    # last one is left there. Write the combined results once.
-                    Tester.write_test_result_json(
-                        "+".join(matched_suites),
-                        selected_results,
-                        args.output,
-                        device_info=Tester.get_device_info(device_id),
-                        emit_summary=False,
+                    # last one is left there. Merge the per-suite files as written,
+                    # since the results were already cleaned up by the JSON writer.
+                    combined = dict(suite_reports[0])
+                    combined["suite_name"] = "+".join(matched_suites)
+                    combined["test_result_list"] = [
+                        test for report in suite_reports for test in report.get("test_result_list", [])
+                    ]
+                    summaries = [report.get("result_summary", {}) for report in suite_reports]
+                    combined["result_summary"] = {
+                        key: sum(summary.get(key, 0) for summary in summaries)
+                        for key in ("tests_executed", "tests_passed", "tests_failed", "tests_optional_failed", "tests_skipped")
+                    }
+                    combined["result_summary"]["overall_passed"] = all(
+                        summary.get("overall_passed", False) for summary in summaries
                     )
+                    with open(args.output, "w", encoding="utf-8") as f:
+                        json.dump(combined, f, indent=4)
+                    LOGGER.ok(f"Saved the combined results JSON at {os.path.abspath(args.output)}.")
                 outcomes = [
                     getattr(result, "test_result", None)
                     or getattr(result, "outcome", None)

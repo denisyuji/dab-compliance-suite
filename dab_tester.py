@@ -36,6 +36,10 @@ class DabTester:
         self.logger = LOGGER
         self.logger.verbose = self.verbose
         self.last_valid_results = []
+        # False for unattended runs: a failed preflight stops instead of prompting
+        self.interactive_preflight = True
+        # Set when a run was stopped during preflight
+        self.preflight_terminated = False
         # Load valid DAB topics using jsons
         try:
             with open("valid_dab_topics.json", "r", encoding="utf-8") as f:
@@ -474,10 +478,10 @@ class DabTester:
         Raises PreflightTermination if we should stop the run.
         """
         # 1) Discovery (hard gate; no prompt)
-        self._preflight_discovery_or_raise(device_id)
+        self._preflight_discovery_or_raise(device_id, interactive=self.interactive_preflight)
 
         # 2) Health-check (prompt allowed)
-        ok = self.pretest_health_check(device_id, retries=3, delay_sec=10, interactive=True, fatal=False)
+        ok = self.pretest_health_check(device_id, retries=3, delay_sec=10, interactive=self.interactive_preflight, fatal=False)
         if not ok:
             raise PreflightTermination("Health-check failed; user chose to terminate.")
 
@@ -869,6 +873,7 @@ class DabTester:
                 # preflight (may raise PreflightTermination)
                 self._preflight_before_each_test_or_raise(device_id)
             except PreflightTermination:
+                self.preflight_terminated = True
                 # Mark THIS test as skipped
                 tr = TestResult(
                     test_id, device_id, dab_topic, "{}", "SKIPPED", "",
@@ -1006,6 +1011,7 @@ class DabTester:
                 if r:
                     result_list.test_result_list.append(r)
         except PreflightTermination:
+            self.preflight_terminated = True
             self.logger.warn("The run was terminated during the preflight stage. Writing partial results and stopping.")
 
         if (len(test_result_output_path) == 0):
@@ -1042,6 +1048,7 @@ class DabTester:
                 if result:
                     result_list.test_result_list.append(result)
         except PreflightTermination:
+            self.preflight_terminated = True
             self.logger.warn("The run was terminated during the preflight stage. Writing partial results and stopping.")
 
         if len(test_result_output_path) == 0:

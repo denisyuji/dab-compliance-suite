@@ -215,6 +215,9 @@ The DAB Compliance Test Tool supports running tests in different ways:
 
   ❯ python3 main.py --dab-version '2.1' -b 192.168.15.112 -I D4CFF9768418 -s functional --skip-manual
 
+  With `--skip-manual`, a failed preflight (discovery or health check) stops
+  the run instead of asking the operator what to do.
+
 3. Full Suite Execution
 
   - Run command:
