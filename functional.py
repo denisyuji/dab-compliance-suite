@@ -7575,7 +7575,7 @@ def run_power_mode_get_standby_verify(dab_topic, test_name, tester, device_id):
     original power mode is restored at the end of the test.
     """
 
-    STANDBY_MODE = "STANDBY"
+    STANDBY_MODE = "Standby"
 
     test_id = to_test_id(f"{dab_topic}/{test_name}")
     logs = []
@@ -7679,7 +7679,7 @@ def run_power_mode_get_standby_verify(dab_topic, test_name, tester, device_id):
         # DAB 2.1: GetPowerModeResponse carries the mode in the 'powerMode' string field.
         pm = obj.get("powerMode") if isinstance(obj, dict) else None
         if isinstance(pm, str) and pm.strip():
-            parsed_state = pm.strip().upper()
+            parsed_state = pm
             state_source = "powerMode"
 
         LOGGER.info(f"[INFO] system/power-mode/get raw response: {raw_resp}")
@@ -7713,7 +7713,7 @@ def run_power_mode_get_standby_verify(dab_topic, test_name, tester, device_id):
     finally:
         # Best-effort restore of the original power mode
         try:
-            if original_mode and original_mode.strip().upper() != STANDBY_MODE:
+            if original_mode and original_mode != STANDBY_MODE:
                 line = f"[STEP] Best-effort restore: setting power mode back to {original_mode!r}."
                 LOGGER.result(line); logs.append(line)
                 restore_status, _ = execute_cmd_and_log(
@@ -7744,7 +7744,7 @@ def run_power_mode_get_on_verify(dab_topic, test_name, tester, device_id):
     Acceptance: 2xx + powerMode == "Active". Anything else → FAILED. 501 → OPTIONAL_FAILED.
     """
 
-    ON_MODE = "ACTIVE"
+    ON_MODE = "Active"
 
     test_id = to_test_id(f"{dab_topic}/{test_name}")
     logs = []
@@ -7821,7 +7821,7 @@ def run_power_mode_get_on_verify(dab_topic, test_name, tester, device_id):
         # DAB 2.1: GetPowerModeResponse carries the mode in the 'powerMode' string field.
         pm = obj.get("powerMode") if isinstance(obj, dict) else None
         if isinstance(pm, str) and pm.strip():
-            parsed_state = pm.strip().upper()
+            parsed_state = pm
             state_source = "powerMode"
 
         LOGGER.info(f"[INFO] system/power-mode/get raw response: {raw_resp}")
@@ -9739,9 +9739,13 @@ def run_power_mode_active_to_standby_check(dab_topic, test_name, tester, device_
         try:
             LOGGER.result("[STEP] Restoring power-mode to 'Active'.")
             logs.append(LOGGER.stamp("[STEP] Restoring power-mode to 'Active'."))
-            execute_cmd_and_log(
+            restore_status, _ = execute_cmd_and_log(
                 tester, device_id, "system/power-mode/set", json.dumps({"powerMode": "Active"}), logs, None
             )
+            if restore_status != 200:
+                msg = f"[WARN] Could not restore power-mode to 'Active' (status={restore_status})."
+                LOGGER.warn(msg)
+                logs.append(LOGGER.stamp(msg))
         except Exception as ex:
             msg = f"[WARN] Could not restore power-mode to 'Active': {ex}"
             LOGGER.warn(msg)
