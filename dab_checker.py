@@ -799,8 +799,8 @@ class DabChecker:
         # the same Device ID (spec 5.3). The device may still answer before it
         # goes down, so wait for uptimeSince to move forward. Devices derive it
         # from the current time minus the uptime, so allow for some jitter.
-        sleep(15)
         deadline = monotonic() + timeout_s
+        sleep(15)
         before = self._uptime_before_factory_reset or 0
         while monotonic() < deadline:
             dab_response = self.__execute_cmd(device_id, "device/info", "{}")
