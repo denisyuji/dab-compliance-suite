@@ -349,8 +349,12 @@ if __name__ == "__main__":
                         key: sum(summary.get(key, 0) for summary in summaries)
                         for key in ("tests_executed", "tests_passed", "tests_failed", "tests_optional_failed", "tests_skipped")
                     }
-                    combined["result_summary"]["overall_passed"] = all(
-                        summary.get("overall_passed", False) for summary in summaries
+                    # A suite stopped in preflight may have written no results at all,
+                    # which its own summary counts as passed.
+                    combined["result_summary"]["overall_passed"] = (
+                        not Tester.preflight_terminated
+                        and len(selected_results) == matched_count
+                        and all(summary.get("overall_passed", False) for summary in summaries)
                     )
                     with open(args.output, "w", encoding="utf-8") as f:
                         json.dump(combined, f, indent=4)
