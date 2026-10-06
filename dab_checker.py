@@ -813,7 +813,8 @@ class DabChecker:
         for attempt in range(1, attempts + 1):
             if self.__execute_cmd(device_id, "device/info", "{}"):
                 return True, f"\nDAB responded to device/info after network reset (attempt {attempt}/{attempts})\n"
-            sleep(10)
+            if attempt < attempts:
+                sleep(10)
         return False, f"\nDAB did not respond to device/info after network reset ({attempts} attempts)\n"
 
     def __check_system_settings_set(self, device_id, dab_request_body):
