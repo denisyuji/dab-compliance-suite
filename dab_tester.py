@@ -902,6 +902,8 @@ class DabTester:
                         # PASS is kept: polling loops expect timeouts while rebooting.
                         if getattr(result, "no_response", False) and getattr(result, "test_result", None) in ("SKIPPED", "UNKNOWN"):
                             result.test_result = "FAILED"
+                            # 'outcome' is the serialized field; tests using finish() set both
+                            result.outcome = "FAILED"
                             log(result, "[FAILED] A DAB request received no response.")
                         result_list.append(result)
                         # derive outcome for the end marker
