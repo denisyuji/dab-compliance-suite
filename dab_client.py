@@ -21,10 +21,12 @@ class DabClient:
         self.__code = -1
 
     def __on_message(self, client, userdata, message):
-        self.__response_dic = json.loads(message.payload)
         # Keep the arrival time, so multi-response operations can check the
         # interval between responses (e.g. log chunks, at most 2 s apart).
-        self.__response_chunks.append((self.__response_dic, monotonic()))
+        # Taken before decoding, so parsing a large chunk does not count.
+        received_at = monotonic()
+        self.__response_dic = json.loads(message.payload)
+        self.__response_chunks.append((self.__response_dic, received_at))
         if self.__lock.locked():
             self.__lock.release()
         try:

@@ -16,17 +16,18 @@ def _stop_and_verify_logs(tester, device_id, logs, result):
     Stops the log collection, reassembles the chunks and checks the folder
     structure. The archive is left extracted in LOGS_COLLECTION_FOLDER.
 
-    Returns an error message, or None when the archive is valid.
+    Returns (stopped, error): whether the device accepted the stop, and an
+    error message, or None when the archive is valid.
     """
     helpers.log_line(logs, "STEP", "Stopping log collection and reassembling the chunks.", result=result)
     status, _ = helpers.execute_cmd_and_log(tester, device_id, "system/logs/stop-collection", "{}", logs=logs, result=result)
     if status != 200:
-        return f"system/logs/stop-collection returned {status} (expected 200)."
+        return False, f"system/logs/stop-collection returned {status} (expected 200)."
     if not EnforcementManager().verify_logs_chunk(tester, logs):
-        return "Log chunks are missing, out of order or more than 2 s apart."
+        return True, "Log chunks are missing, out of order or more than 2 s apart."
     if not EnforcementManager().verify_logs_structure(logs):
-        return "The log archive does not have the system/, application/ and crash/ folders."
-    return None
+        return True, "The log archive does not have the system/, application/ and crash/ folders."
+    return True, None
 
 
 def run_logs_collection_app_folder_check(dab_topic, test_name, tester, device_id):
@@ -79,8 +80,8 @@ def run_logs_collection_app_folder_check(dab_topic, test_name, tester, device_id
         helpers.execute_cmd_and_log(tester, device_id, "applications/exit", f'{{"appId": "{app_id}"}}', logs=logs, result=result)
 
         # 3) Stop log collection and verify the archive
-        collecting = False
-        error = _stop_and_verify_logs(tester, device_id, logs, result)
+        stopped, error = _stop_and_verify_logs(tester, device_id, logs, result)
+        collecting = not stopped
         if error:
             helpers.finish(result, logs, "FAILED", error)
             return result
@@ -160,8 +161,8 @@ def run_logs_collection_repeat_check(dab_topic, test_name, tester, device_id):
             helpers.log_line(logs, "WAIT", f"Collecting logs for {COLLECTION_WAIT}s.", result=result)
             time.sleep(COLLECTION_WAIT)
 
-            collecting = False
-            error = _stop_and_verify_logs(tester, device_id, logs, result)
+            stopped, error = _stop_and_verify_logs(tester, device_id, logs, result)
+            collecting = not stopped
             EnforcementManager().delete_logs_collection_files()
             if error:
                 helpers.finish(result, logs, "FAILED", f"Collection {attempt}: {error}")
